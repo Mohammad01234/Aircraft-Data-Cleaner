@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: aircraft-data
+    description: Temporary aircraft dataset sessions
 paths:
   /healthz:
     get:
@@ -24,7 +26,185 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /data-sessions:
+    post:
+      operationId: createDataSession
+      tags: [aircraft-data]
+      summary: Upload a JSON dataset into a temporary processing session
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Dataset imported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataSession"
+        "400":
+          description: Invalid JSON dataset
+    get:
+      operationId: getDataSession
+      tags: [aircraft-data]
+      summary: Read a temporary dataset summary
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataSession"
+  /data-sessions/flights:
+    get:
+      operationId: getSessionFlights
+      tags: [aircraft-data]
+      summary: Search and page through flight readings
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: tailNumber
+          in: query
+          schema: { type: string }
+        - name: condition
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        "200":
+          description: Flight reading page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlightPage"
+  /data-sessions/{sessionId}/analytics:
+    get:
+      operationId: getSessionAnalytics
+      tags: [aircraft-data]
+      summary: Read aircraft, condition, and balance summaries
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Dataset analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analytics"
+  /data-sessions/{sessionId}/fft-audit:
+    get:
+      operationId: getFftAudit
+      tags: [aircraft-data]
+      summary: Review FFT data quality findings without changing samples
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: FFT audit summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FftAudit"
+  /data-sessions/{sessionId}/clean/preview:
+    post:
+      operationId: previewCleanup
+      tags: [aircraft-data]
+      summary: Preview documented cleanup changes without applying them
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CleanupOptions"
+      responses:
+        "200":
+          description: Proposed cleanup changes and audit entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CleanupPreview"
+  /data-sessions/{sessionId}/clean/apply:
+    post:
+      operationId: applyCleanup
+      tags: [aircraft-data]
+      summary: Apply the previewed cleanup plan
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Cleaned dataset summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataSession"
+  /data-sessions/{sessionId}/export:
+    get:
+      operationId: exportCleanedData
+      tags: [aircraft-data]
+      summary: Get the download link for the cleaned JSON dataset
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Streamed download path for the cleaned JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportReady"
+  /data-sessions/{sessionId}/download:
+    get:
+      operationId: downloadCleanedData
+      tags: [aircraft-data]
+      summary: Stream the cleaned JSON file
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Original-schema JSON with cleanup applied and FFT samples retained
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+  /data-sessions/{sessionId}:
+    delete:
+      operationId: closeDataSession
+      tags: [aircraft-data]
+      summary: Close a session and remove its temporary data
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "204":
+          description: Session closed
 components:
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +213,143 @@ components:
           type: string
       required:
         - status
+    DataSession:
+      type: object
+      required: [sessionId, filename, bytes, importedAt, expiresInSeconds, counts, log]
+      properties:
+        sessionId: { type: string }
+        filename: { type: string }
+        bytes: { type: integer }
+        importedAt: { type: string, format: date-time }
+        expiresInSeconds: { type: integer }
+        cleaned: { type: boolean }
+        counts:
+          $ref: "#/components/schemas/DatasetCounts"
+        log:
+          type: array
+          items: { type: string }
+    DatasetCounts:
+      type: object
+      required: [aircraft, tests, flights, balanceReadings, trackReadings, fftCaptures, fftSamples]
+      properties:
+        aircraft: { type: integer }
+        tests: { type: integer }
+        flights: { type: integer }
+        balanceReadings: { type: integer }
+        trackReadings: { type: integer }
+        fftCaptures: { type: integer }
+        fftSamples: { type: integer }
+    CleanupOptions:
+      type: object
+      required: [removeEmptyFlights, mergeKnownTailVariants, removeJunkAircraft, applyDateCorrections, removeTargetedTests, mergeEvidenceBasedChains]
+      properties:
+        removeEmptyFlights: { type: boolean }
+        mergeKnownTailVariants: { type: boolean }
+        removeJunkAircraft: { type: boolean }
+        applyDateCorrections: { type: boolean }
+        removeTargetedTests: { type: boolean }
+        mergeEvidenceBasedChains: { type: boolean }
+    CleanupPreview:
+      type: object
+      required: [before, after, operations, warnings, fftSamplesChanged]
+      properties:
+        before: { $ref: "#/components/schemas/DatasetCounts" }
+        after: { $ref: "#/components/schemas/DatasetCounts" }
+        operations:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+        fftSamplesChanged: { type: integer }
+    ExportReady:
+      type: object
+      required: [downloadUrl, filename, bytes]
+      properties:
+        downloadUrl: { type: string }
+        filename: { type: string }
+        bytes: { type: integer }
+    FlightPage:
+      type: object
+      required: [items, page, limit, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FlightReading" }
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+    FlightReading:
+      type: object
+      required: [tailNumber, testNumber, flightNumber, started, ended, balanceData, trackData]
+      properties:
+        tailNumber: { type: string }
+        testNumber: { type: string }
+        flightNumber: { type: string }
+        started: { type: ["string", "null"] }
+        ended: { type: ["string", "null"] }
+        balanceData:
+          type: array
+          items: { $ref: "#/components/schemas/BalanceReading" }
+        trackData:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    BalanceReading:
+      type: object
+      required: [testCondition, part, axis]
+      properties:
+        testCondition: { type: string }
+        part: { type: string }
+        axis: { type: string }
+        amplitude: { type: ["number", "null"] }
+        phase: { type: ["number", "null"] }
+    Analytics:
+      type: object
+      required: [counts, byCondition, byPart, compliance]
+      properties:
+        counts: { $ref: "#/components/schemas/DatasetCounts" }
+        byCondition:
+          type: array
+          items:
+            type: object
+            required: [name, flights]
+            properties:
+              name: { type: string }
+              flights: { type: integer }
+        byPart:
+          type: array
+          items:
+            type: object
+            required: [name, readings]
+            properties:
+              name: { type: string }
+              readings: { type: integer }
+        compliance:
+          type: array
+          items:
+            type: object
+            required: [axis, limit, violations]
+            properties:
+              axis: { type: string }
+              limit: { type: number }
+              violations: { type: integer }
+    FftAudit:
+      type: object
+      required: [captures, samples, findings, preserved]
+      properties:
+        captures: { type: integer }
+        samples: { type: integer }
+        findings:
+          type: array
+          items:
+            type: object
+            required: [code, label, count, severity]
+            properties:
+              code: { type: string }
+              label: { type: string }
+              count: { type: integer }
+              severity: { type: string, enum: [info, warning, critical] }
+        preserved: { type: boolean }
 

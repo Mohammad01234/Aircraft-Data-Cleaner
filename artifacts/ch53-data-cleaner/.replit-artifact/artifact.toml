@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "CH-53G Data Cleaner"
+description = "A session-only workspace to import CH-53G aircraft and flight JSON, inspect readings and audit logs, preview the documented cleanup rules, and export the cleaned JSON."
+version = "1.0.0"
+id = "artifacts/ch53-data-cleaner"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23095
+
+[services.development]
+run = "pnpm --filter @workspace/ch53-data-cleaner run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ch53-data-cleaner", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/ch53-data-cleaner/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23095"
+BASE_PATH = "/"

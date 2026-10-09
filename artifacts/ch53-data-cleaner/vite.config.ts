@@ -72,6 +72,15 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    watch: {
+      usePolling: true,
+    },
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+    },
   },
   preview: {
     port,

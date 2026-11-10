@@ -32,6 +32,14 @@ export interface DataSession {
 
 export interface CleanupOptions {
   removeEmptyFlights: boolean;
+  mergeByDays: boolean;
+  /** @minimum 1 */
+  mergeGapDays: number;
+  splitByDays: boolean;
+  /** @minimum 1 */
+  splitGapDays: number;
+  removeSmallAmplitude: boolean;
+  removeWorseningQ: boolean;
   mergeKnownTailVariants: boolean;
   removeJunkAircraft: boolean;
   applyDateCorrections: boolean;

@@ -168,8 +168,18 @@ export const PreviewCleanupParams = zod.object({
   "sessionId": zod.coerce.string()
 })
 
+
+
+
+
 export const PreviewCleanupBody = zod.object({
   "removeEmptyFlights": zod.boolean(),
+  "mergeByDays": zod.boolean(),
+  "mergeGapDays": zod.number().int().min(1),
+  "splitByDays": zod.boolean(),
+  "splitGapDays": zod.number().int().min(1),
+  "removeSmallAmplitude": zod.boolean(),
+  "removeWorseningQ": zod.boolean(),
   "mergeKnownTailVariants": zod.boolean(),
   "removeJunkAircraft": zod.boolean(),
   "applyDateCorrections": zod.boolean(),

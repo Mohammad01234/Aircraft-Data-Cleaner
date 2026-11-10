@@ -241,9 +241,15 @@ components:
         fftSamples: { type: integer }
     CleanupOptions:
       type: object
-      required: [removeEmptyFlights, mergeKnownTailVariants, removeJunkAircraft, applyDateCorrections, removeTargetedTests, mergeEvidenceBasedChains]
+      required: [removeEmptyFlights, mergeByDays, mergeGapDays, splitByDays, splitGapDays, removeSmallAmplitude, removeWorseningQ, mergeKnownTailVariants, removeJunkAircraft, applyDateCorrections, removeTargetedTests, mergeEvidenceBasedChains]
       properties:
         removeEmptyFlights: { type: boolean }
+        mergeByDays: { type: boolean}
+        mergeGapDays: { type: integer, minimum: 1}
+        splitByDays: { type: boolean}
+        splitGapDays: { type: integer, minimum: 1}
+        removeSmallAmplitude: { type: boolean }
+        removeWorseningQ: { type: boolean }
         mergeKnownTailVariants: { type: boolean }
         removeJunkAircraft: { type: boolean }
         applyDateCorrections: { type: boolean }

@@ -31,4 +31,9 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
 
+// Desktop app: also serve the built frontend when STATIC_DIR is set
+if (process.env["STATIC_DIR"]) {
+  app.use(express.static(process.env["STATIC_DIR"]));
+}
+
 export default app;

@@ -14,15 +14,20 @@ import {
   useGetSessionAnalytics, useGetSessionFlights, usePreviewCleanup,
   type CleanupOptions, type CleanupPreview, type DataSession,
 } from '@workspace/api-client-react';
-
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 const queryClient = new QueryClient();
 const countFields = [
   ['aircraft', 'Aircraft'], ['tests', 'Tests'], ['flights', 'Flights'],
   ['balanceReadings', 'Balance readings'], ['trackReadings', 'Track readings'],
   ['fftCaptures', 'FFT captures'], ['fftSamples', 'FFT samples'],
 ] as const;
-const cleanupChoices: { key: keyof CleanupOptions; title: string; detail: string }[] = [
+type BooleanOptionKey = { [K in keyof CleanupOptions]: CleanupOptions[K] extends boolean ? K : never }[keyof CleanupOptions];
+const cleanupChoices: { key: BooleanOptionKey; title: string; detail: string }[] = [
   { key: 'removeEmptyFlights', title: 'Remove empty flights', detail: 'Flights with no retained reading data' },
+  { key: 'mergeByDays', title: 'Merge regarding chosen days', detail: 'Merge tests that are only a chosen days apart' },
+  { key: 'splitByDays', title: 'split regarding chosen days', detail: 'split tests that are only a chosen days apart' },
+  { key: 'removeSmallAmplitude', title: 'Remove near-zero balance measurements', detail: 'Drops balance readings at or below 0.0005 ips, and linked track/FFT/predicted data' },
+  { key: 'removeWorseningQ', title: 'Remove tests with worsening quality (Qa)', detail: "Deletes a test if any rotor part's quality score gets worse between flights" },
   { key: 'mergeKnownTailVariants', title: 'Merge known tail variants', detail: 'Documented tail-number variants' },
   { key: 'removeJunkAircraft', title: 'Remove junk aircraft records', detail: 'Known non-aircraft entries' },
   { key: 'applyDateCorrections', title: 'Apply date corrections', detail: 'Documented date corrections' },
@@ -31,6 +36,12 @@ const cleanupChoices: { key: keyof CleanupOptions; title: string; detail: string
 ];
 const initialOptions: CleanupOptions = {
   removeEmptyFlights: true,
+  mergeByDays: false,
+  mergeGapDays: 6,
+  splitByDays: false,
+  splitGapDays: 6,
+  removeSmallAmplitude: false,
+  removeWorseningQ: false,
   mergeKnownTailVariants: true,
   removeJunkAircraft: true,
   applyDateCorrections: true,
@@ -39,6 +50,20 @@ const initialOptions: CleanupOptions = {
 };
 
 type LocalEvent = { label: string; time: string; tone?: 'success' | 'warning' };
+type HistogramData = {
+  allFlightsPerTest: number[];
+  hauptFlightsPerTest: number[];
+  heckFlightsPerTest: number[];
+  hauptBodenlaufPerTest: number[];
+  hauptOtherConditionsPerTest: number[];
+  heckBodenlaufPerTest: number[];
+  heckOtherConditionsPerTest: number[];
+};
+
+type HistogramAnalytics = {
+  averageFlightsPerTest: number;
+  histograms: HistogramData;
+};
 const nowLabel = () => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date());
 const prettyBytes = (bytes: number) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const friendlyError = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed. Try again.';
@@ -48,6 +73,144 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <Workbench />
     </QueryClientProvider>
+  );
+}
+
+const mergeDayChoices = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 21, 30];
+
+function MergeDaysRow({ title, checked, days, onToggle, onPick }: {
+  title: string; checked: boolean; days: number;
+  onToggle: (checked: boolean) => void; onPick: (days: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <label className="flex cursor-pointer items-center justify-between gap-4 py-3.5" data-testid="option-mergeByDays">
+          <span>
+            <span className="block text-[11px] font-semibold text-[#36484b]">{title}</span>
+            <span className="mt-1 block text-[9px] text-[#858c88]">
+              {checked
+                ? <>Tests up to {days} day{days === 1 ? '' : 's'} apart are merged · <button type="button" onClick={(event) => { event.preventDefault(); setOpen(true); }} className="font-semibold text-[#28665f] underline">change</button></>
+                : 'Merge tests that are only a few days apart'}
+            </span>
+          </span>
+          <input type="checkbox" checked={checked} onChange={(event) => { onToggle(event.target.checked); setOpen(event.target.checked); }} className="h-4 w-4 shrink-0 accent-[#28665f]" aria-label={title} />
+        </label>
+      </PopoverAnchor>
+      <PopoverContent align="end" className="w-64 border-[#d8d2c5] bg-[#fbfaf5] p-3" data-testid="popover-merge-days">
+        <div className="text-[10px] font-semibold text-[#36484b]">Maximum days between tests</div>
+        <div className="mt-2 grid grid-cols-4 gap-1.5">
+          {mergeDayChoices.map((value) => (
+            <button key={value} type="button" onClick={() => { onPick(value); setOpen(false); }}
+              className={`rounded-md border px-2 py-1.5 text-[11px] font-semibold ${value === days ? 'border-[#234e52] bg-[#234e52] text-[#f7f5ed]' : 'border-[#d8d2c5] bg-white text-[#36484b] hover:bg-[#efece1]'}`}>
+              {value}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-[9px] leading-4 text-[#7d8582]">Days between the last flight of one test and the first flight of the next test.</p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function SplitDaysRow({
+  title,
+  checked,
+  days,
+  onToggle,
+  onPick,
+}: {
+  title: string;
+  checked: boolean;
+  days: number;
+  onToggle: (checked: boolean) => void;
+  onPick: (days: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <label
+          className="flex cursor-pointer items-center justify-between gap-4 py-3.5"
+          data-testid="option-splitByDays"
+        >
+          <span>
+            <span className="block text-[11px] font-semibold text-[#36484b]">
+              {title}
+            </span>
+
+            <span className="mt-1 block text-[9px] text-[#858c88]">
+              {checked ? (
+                <>
+                  Split when flights are {days} or more days apart ·{' '}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      setOpen(true);
+                    }}
+                    className="font-semibold text-[#28665f] underline"
+                  >
+                    change
+                  </button>
+                </>
+              ) : (
+                'Split tests when there is a long gap between flights'
+              )}
+            </span>
+          </span>
+
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(event) => {
+              const enabled = event.target.checked;
+              onToggle(enabled);
+              setOpen(enabled);
+            }}
+            className="h-4 w-4 shrink-0 accent-[#28665f]"
+            aria-label={title}
+          />
+        </label>
+      </PopoverAnchor>
+
+      <PopoverContent
+        align="end"
+        className="w-64 border-[#d8d2c5] bg-[#fbfaf5] p-3"
+        data-testid="popover-split-days"
+      >
+        <div className="text-[10px] font-semibold text-[#36484b]">
+          Minimum gap between flights
+        </div>
+
+        <div className="mt-2 grid grid-cols-4 gap-1.5">
+          {mergeDayChoices.map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => {
+                onPick(value);
+                setOpen(false);
+              }}
+              className={`rounded-md border px-2 py-1.5 text-[11px] font-semibold ${
+                value === days
+                  ? 'border-[#234e52] bg-[#234e52] text-[#f7f5ed]'
+                  : 'border-[#d8d2c5] bg-white text-[#36484b] hover:bg-[#efece1]'
+              }`}
+            >
+              {value}
+            </button>
+          ))}
+        </div>
+
+        <p className="mt-2 text-[9px] leading-4 text-[#7d8582]">
+          A gap at least this long starts a new test at the later flight.
+          The selected value is saved when you choose it.
+        </p>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -68,6 +231,7 @@ function Workbench() {
   const [expandedFlight, setExpandedFlight] = useState('');
   const [activity, setActivity] = useState<LocalEvent[]>([]);
   const [exportRequested, setExportRequested] = useState(false);
+  const [showHistos, setShowHistos] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const sessionQuery = useGetDataSession({ sessionId: sessionId || '' }, {
@@ -111,14 +275,30 @@ function Workbench() {
   }, [sessionId]);
 
   const acceptFile = (picked: File | undefined) => {
-    if (!picked) return;
-    if (!picked.name.toLowerCase().endsWith('.json') && picked.type !== 'application/json') {
-      setFile(null);
-      addActivity('Import rejected · select a JSON file', 'warning');
-      return;
-    }
-    setFile(picked);
-  };
+  if (!picked) return;
+
+  const name = picked.name.toLowerCase();
+  const supportedExtension =
+    name.endsWith(".json") ||
+    name.endsWith(".json.txt") ||
+    name.endsWith(".txt");
+
+  const supportedMime =
+    picked.type === "application/json" ||
+    picked.type === "text/plain" ||
+    picked.type === "";
+
+  if (!supportedExtension || !supportedMime) {
+    setFile(null);
+    addActivity(
+      "Import rejected · select a JSON file or a text file containing JSON",
+      "warning",
+    );
+    return;
+  }
+
+  setFile(picked);
+};
   const startUpload = () => {
     if (!file || createSession.isPending) return;
     createSession.mutate({ data: file }, {
@@ -187,7 +367,9 @@ function Workbench() {
   };
 
   const counts = session?.counts;
-  const analytics = analyticsQuery.data;
+  const analytics = analyticsQuery.data as (
+    NonNullable<typeof analyticsQuery.data> & HistogramAnalytics
+  ) | undefined;
   const flights = flightsQuery.data;
   const fft = fftQuery.data;
   const shownEvents = [...activity, ...(session?.log ?? []).map((label) => ({ label, time: 'API' }))].slice(0, 7);
@@ -264,7 +446,7 @@ function Workbench() {
                   <span className="font-mono text-[9px] tracking-[.1em] text-[#9a9b91]">01 / IMPORT</span>
                 </div>
                 <div className="p-5 sm:p-7">
-                  <input ref={fileInput} type="file" accept=".json,application/json" className="sr-only" onChange={(event) => acceptFile(event.target.files?.[0])} data-testid="input-data-file" />
+                  <input ref={fileInput} type="file" accept=".json,.txt,.json.txt,application/json,text/plain" className="sr-only" onChange={(event) => acceptFile(event.target.files?.[0])} data-testid="input-data-file" />
                   <button
                     type="button"
                     onClick={() => fileInput.current?.click()}
@@ -348,14 +530,171 @@ function Workbench() {
                 </div>
               </section>
 
+              <section className="mt-5 overflow-hidden rounded-xl border border-[#d8d2c5] bg-[#fbfaf5]">
+                <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4 sm:px-6">
+                  <div>
+                    <div className="text-[12px] font-bold text-[#344649]">
+                      Flight distribution
+                    </div>
+                    <div className="mt-1 text-[9px] text-[#858b85]">
+                      Average flights per test across the uploaded dataset
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="rounded-md bg-[#e8ece5] px-4 py-2.5">
+                      <div className="font-mono text-[8px] uppercase tracking-[.1em] text-[#718079]">
+                        AVG flights / test
+                      </div>
+                      <div className="mt-1 text-[22px] font-extrabold tracking-[-.04em] text-[#2d4145]">
+                        {analytics?.averageFlightsPerTest != null
+                          ? analytics.averageFlightsPerTest.toFixed(2)
+                          : '—'}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowHistos((current) => !current)}
+                      className="inline-flex items-center gap-2 rounded-md bg-[#1f5960] px-4 py-3 text-[10px] font-bold text-white transition hover:bg-[#17484f]"
+                      aria-expanded={showHistos}
+                      data-testid="button-see-histos"
+                    >
+                      <Activity size={14} />
+                      {showHistos ? 'Hide Histos' : 'See Histos'}
+                    </button>
+                  </div>
+                </div>
+
+                {showHistos && (
+                  <div className="grid gap-4 border-t border-[#e5e0d5] bg-[#f7f5ed] p-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {analytics?.histograms ? (
+                      <>
+                        <HistogramCard
+                          title="All flights per test"
+                          values={analytics.histograms.allFlightsPerTest}
+                        />
+                        <HistogramCard
+                          title="Haupt flights per test"
+                          values={analytics.histograms.hauptFlightsPerTest}
+                        />
+                        <HistogramCard
+                          title="Heck flights per test"
+                          values={analytics.histograms.heckFlightsPerTest}
+                        />
+                        <HistogramCard
+                          title="Haupt · Bodenlauf only"
+                          values={analytics.histograms.hauptBodenlaufPerTest}
+                        />
+                        <HistogramCard
+                          title="Haupt · Other conditions"
+                          values={analytics.histograms.hauptOtherConditionsPerTest}
+                        />
+                        <HistogramCard
+                          title="Heck · Bodenlauf only"
+                          values={analytics.histograms.heckBodenlaufPerTest}
+                        />
+                        <HistogramCard
+                          title="Heck · Other conditions"
+                          values={analytics.histograms.heckOtherConditionsPerTest}
+                        />
+                      </>
+                    ) : (
+                      <p className="text-[10px] text-[#858b85]">
+                        Histogram data is not available yet. Check that the analytics API returns the histogram fields.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </section>
               <section className="animate-enter delay-2 mt-5 grid items-start gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(340px,.85fr)]">
                 <div className="overflow-hidden rounded-xl border border-[#d8d2c5] bg-[#fbfaf5]">
                   <PanelHeading number="02" icon={<SlidersHorizontal size={15} />} title="Cleanup proposal" tag="Preview before apply" />
                   <div className="divide-y divide-[#e7e2d7] px-5 sm:px-6">
-                    {cleanupChoices.map((choice) => <label key={choice.key} className="flex cursor-pointer items-center justify-between gap-4 py-3.5" data-testid={`option-${choice.key}`}>
-                      <span><span className="block text-[11px] font-semibold text-[#36484b]">{choice.title}</span><span className="mt-1 block text-[9px] text-[#858c88]">{choice.detail}</span></span>
-                      <input type="checkbox" checked={options[choice.key]} onChange={(event) => { setOptions((current) => ({ ...current, [choice.key]: event.target.checked })); setPreview(null); }} className="h-4 w-4 shrink-0 accent-[#28665f]" aria-label={choice.title} />
-                    </label>)}
+
+              {cleanupChoices.map((choice) => {
+                if (choice.key === 'mergeByDays') {
+                  return (
+                    <MergeDaysRow
+                      key={choice.key}
+                      title={choice.title}
+                      checked={options.mergeByDays}
+                      days={options.mergeGapDays}
+                      onToggle={(checked) => {
+                        setOptions((current) => ({
+                          ...current,
+                          mergeByDays: checked,
+                        }));
+                        setPreview(null);
+                      }}
+                      onPick={(value) => {
+                        setOptions((current) => ({
+                          ...current,
+                          mergeGapDays: value,
+                        }));
+                        setPreview(null);
+                      }}
+                    />
+                  );
+                }
+
+                if (choice.key === 'splitByDays') {
+                  return (
+                    <SplitDaysRow
+                      key={choice.key}
+                      title={choice.title}
+                      checked={options.splitByDays}
+                      days={options.splitGapDays}
+                      onToggle={(checked) => {
+                        setOptions((current) => ({
+                          ...current,
+                          splitByDays: checked,
+                        }));
+                        setPreview(null);
+                      }}
+                      onPick={(value) => {
+                        setOptions((current) => ({
+                          ...current,
+                          splitGapDays: value,
+                        }));
+                        setPreview(null);
+                      }}
+                    />
+                  );
+                }
+
+                return (
+                  <label
+                    key={choice.key}
+                    className="flex w-full cursor-pointer items-center justify-between gap-4 py-3.5"
+                    data-testid={`option-${choice.key}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-[11px] font-semibold text-[#36484b]">
+                        {choice.title}
+                      </span>
+                      <span className="mt-1 block text-[9px] leading-4 text-[#858c88]">
+                        {choice.detail}
+                      </span>
+                    </span>
+
+                    <input
+                      type="checkbox"
+                      checked={options[choice.key]}
+                      onChange={(event) => {
+                        setOptions((current) => ({
+                          ...current,
+                          [choice.key]: event.target.checked,
+                        }));
+                        setPreview(null);
+                      }}
+                      className="h-4 w-4 shrink-0 accent-[#28665f]"
+                      aria-label={choice.title}
+                    />
+                  </label>
+               );
+             })}
+
                   </div>
                   <div className="flex flex-col gap-3 border-t border-[#e3ded3] bg-[#f7f5ed] px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                     <p className="max-w-[230px] text-[9px] leading-4 text-[#7d8582]">Preview runs documented rules only. No records change until you apply the reviewed plan.</p>
@@ -459,6 +798,78 @@ function Workbench() {
           )}
         </div>
       </main>
+    </div>
+  );
+}
+
+function HistogramCard({
+  title,
+  values,
+}: {
+  title: string;
+  values: number[];
+}) {
+  const distribution = new Map<number, number>();
+
+  for (const value of values) {
+    distribution.set(value, (distribution.get(value) ?? 0) + 1);
+  }
+
+  const bins = [...distribution.entries()].sort((a, b) => a[0] - b[0]);
+  const maxFrequency = Math.max(1, ...bins.map(([, frequency]) => frequency));
+
+  return (
+    <div className="min-w-0 rounded-lg border border-[#e0dbcf] bg-[#fbfaf5] p-4">
+      <div className="text-[10px] font-bold text-[#344649]">
+        {title}
+      </div>
+
+      <div className="mt-1 text-[8px] text-[#858b85]">
+        Number of tests by flights per test
+      </div>
+
+      {bins.length === 0 ? (
+        <div className="py-8 text-center text-[9px] text-[#858b85]">
+          No data available
+        </div>
+      ) : (
+        <>
+          <div className="mt-5 flex h-32 items-end gap-1 border-b border-l border-[#dcd7ca] px-2">
+            {bins.map(([flightCount, frequency]) => (
+              <div
+                key={flightCount}
+                className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1"
+                title={`${flightCount} flights: ${frequency} test(s)`}
+              >
+                <span className="font-mono text-[8px] text-[#687773]">
+                  {frequency}
+                </span>
+                <div
+                  className="w-full max-w-8 rounded-t-sm bg-[#528477]"
+                  style={{
+                    height: `${Math.max(3, (frequency / maxFrequency) * 80)}px`,
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-2 flex gap-1 px-2">
+            {bins.map(([flightCount]) => (
+              <div
+                key={flightCount}
+                className="min-w-0 flex-1 text-center font-mono text-[8px] text-[#858b85]"
+              >
+                {flightCount}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 text-[8px] text-[#858b85]">
+            X-axis: flights per test · Y-axis: number of tests
+          </div>
+        </>
+      )}
     </div>
   );
 }

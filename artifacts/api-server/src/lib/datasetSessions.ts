@@ -14,6 +14,12 @@ import { streamObject } from "stream-json/streamers/stream-object.js";
 type RecordValue = Record<string, unknown>;
 type CleanupOptions = {
   removeEmptyFlights: boolean;
+  mergeByDays: boolean;
+  mergeGapDays: number;
+  splitByDays: boolean;
+  splitGapDays: number;
+  removeSmallAmplitude: boolean;
+  removeWorseningQa: boolean;
   mergeKnownTailVariants: boolean;
   removeJunkAircraft: boolean;
   applyDateCorrections: boolean;
@@ -45,11 +51,22 @@ type FlightReading = {
   balanceData: BalanceReading[];
   trackData: RecordValue[];
 };
+type HistogramData = {
+  allFlightsPerTest: number[];
+  hauptFlightsPerTest: number[];
+  heckFlightsPerTest: number[];
+  hauptBodenlaufPerTest: number[];
+  hauptOtherConditionsPerTest: number[];
+  heckBodenlaufPerTest: number[];
+  heckOtherConditionsPerTest: number[];
+};
 type Analytics = {
   counts: Counts;
   byCondition: Array<{ name: string; flights: number }>;
   byPart: Array<{ name: string; readings: number }>;
   compliance: Array<{ axis: string; limit: number; violations: number }>;
+  histograms: HistogramData;
+  averageFlightsPerTest: number;
 };
 type FftFinding = {
   code: string;
@@ -234,7 +251,26 @@ function makeAnalytics(
   conditionCounts: Map<string, number>,
   partCounts: Map<string, number>,
   violations: Map<string, { limit: number; count: number }>,
+  histograms: HistogramData,
 ): Analytics {
+  return {
+    counts,
+    byCondition: [...conditionCounts.entries()]
+      .map(([name, flights]) => ({ name, flights }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    byPart: [...partCounts.entries()]
+      .map(([name, readings]) => ({ name, readings }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    compliance: [...violations.entries()].map(([axis, value]) => ({
+      axis,
+      limit: value.limit,
+      violations: value.count,
+    })),
+    histograms,
+    averageFlightsPerTest:
+      counts.tests > 0 ? counts.flights / counts.tests : 0,
+  };
+}
   return {
     counts,
     byCondition: [...conditionCounts.entries()]
@@ -251,33 +287,109 @@ function makeAnalytics(
   };
 }
 
-async function* aircraftItems(path: string): AsyncGenerator<RecordValue> {
+
+async function jsonRootIsArray(path: string): Promise<boolean> {
+  const source = createReadStream(path, {
+    encoding: "utf8",
+    highWaterMark: 4096,
+  });
+
+  try {
+    for await (const chunk of source) {
+      const first = String(chunk).match(/\S/);
+      if (first) return first[0] === "[";
+    }
+  } finally {
+    source.destroy();
+  }
+
+  throw new Error("The uploaded file is empty or does not contain JSON data.");
+}
+
+async function* aircraftAtPath(
+  path: string,
+  filter?: string,
+): AsyncGenerator<RecordValue> {
   const source = createReadStream(path);
-  const stream = chain([
-    source,
-    parser(),
-    pick({ filter: "Aircraft" }),
-    streamArray(),
-  ]);
+  const stages = [source, parser()];
+
+  const stream = chain(
+    filter
+      ? [...stages, pick({ filter }), streamArray()]
+      : [...stages, streamArray()],
+  );
+
   for await (const item of stream) {
     const value = asRecord((item as { value?: unknown }).value);
     if (Object.keys(value).length) yield value;
   }
 }
 
+async function* aircraftItems(
+  path: string,
+): AsyncGenerator<RecordValue> {
+  // Format 1: a JSON root array of aircraft records.
+  if (await jsonRootIsArray(path)) {
+    yield* aircraftAtPath(path);
+    return;
+  }
+
+  // Format 2: an Aircraft array at the root or inside a common wrapper.
+  const candidates = [
+    "Aircraft",
+    "aircraft",
+    "aircrafts",
+    "data.Aircraft",
+    "data.aircraft",
+    "dataset.Aircraft",
+    "Dataset.Aircraft",
+    "Export.Aircraft",
+  ];
+
+  for (const candidate of candidates) {
+    let found = false;
+
+    for await (const aircraft of aircraftAtPath(path, candidate)) {
+      found = true;
+      yield aircraft;
+    }
+
+    if (found) return;
+  }
+
+  throw new Error(
+    'Could not find aircraft records. Expected an "Aircraft" array, ' +
+      '"data.Aircraft", "aircraft", or a root array of aircraft records.',
+  );
+}
+
+
 async function collectMetadata(path: string): Promise<RecordValue> {
+  // A root array has no separate metadata object.
+  if (await jsonRootIsArray(path)) {
+    return {};
+  }
+
   const source = createReadStream(path);
+
   const stream = chain([
     source,
     parser(),
     ignore({ filter: "Aircraft" }),
     streamObject(),
   ]);
+
   const metadata: RecordValue = {};
+
   for await (const entry of stream) {
-    const { key, value } = entry as { key: string; value: unknown };
+    const { key, value } = entry as {
+      key: string;
+      value: unknown;
+    };
+
     metadata[key] = value;
   }
+
   return metadata;
 }
 
@@ -292,6 +404,15 @@ async function scanDataset(path: string): Promise<{
   const conditionCounts = new Map<string, number>();
   const partCounts = new Map<string, number>();
   const violations = new Map<string, { limit: number; count: number }>();
+  const histograms: HistogramData = {
+    allFlightsPerTest: [],
+    hauptFlightsPerTest: [],
+    heckFlightsPerTest: [],
+    hauptBodenlaufPerTest: [],
+    hauptOtherConditionsPerTest: [],
+    heckBodenlaufPerTest: [],
+    heckOtherConditionsPerTest: [],
+  };
   const fft = {
     captures: 0,
     samples: 0,
@@ -306,6 +427,15 @@ async function scanDataset(path: string): Promise<{
       const test = asRecord(testValue);
       counts.tests += 1;
       const testNumber = text(test.TestNumber, "—");
+
+      let allFlights = 0;
+      let hauptFlights = 0;
+      let heckFlights = 0;
+      let hauptBodenlauf = 0;
+      let hauptOtherConditions = 0;
+      let heckBodenlauf = 0;
+      let heckOtherConditions = 0;
+
       for (const flightValue of asItems(test.Flights)) {
         const flight = asRecord(flightValue);
         counts.flights += 1;
@@ -349,6 +479,57 @@ async function scanDataset(path: string): Promise<{
           conditions.add(text(reading.TestCondition, "Unknown"));
         for (const condition of conditions)
           conditionCounts.set(condition, (conditionCounts.get(condition) ?? 0) + 1);
+        // Histogram counts: every flight counts, even without measurement data.
+        allFlights += 1;
+
+        // Haupt is identified in either BalanceData or TrackData.
+        const hasHaupt =
+          balanceData.some((reading) => reading.part === "Haupt") ||
+          trackData.some((reading) => text(reading.Part) === "Haupt");
+
+        // Heck is identified in BalanceData only.
+        const hasHeck = balanceData.some(
+          (reading) => reading.part === "Heck",
+        );
+
+        // Bodenlauf-only means exactly one unique condition: Bodenlauf.
+        const isBodenlaufOnly =
+          conditions.size === 1 && conditions.has("Bodenlauf");
+
+        // Other conditions can appear alongside other conditions.
+        const otherConditions = [
+          "Hovern OGE",
+          "90 Knoten",
+          "110 Knoten",
+          "130 Knoten",
+        ];
+        const hasOtherCondition = otherConditions.some((condition) =>
+          conditions.has(condition),
+        );
+
+        if (hasHaupt) {
+          hauptFlights += 1;
+
+          if (isBodenlaufOnly) {
+            hauptBodenlauf += 1;
+          }
+
+          if (hasOtherCondition) {
+            hauptOtherConditions += 1;
+          }
+        }
+
+        if (hasHeck) {
+          heckFlights += 1;
+
+          if (isBodenlaufOnly) {
+            heckBodenlauf += 1;
+          }
+
+          if (hasOtherCondition) {
+            heckOtherConditions += 1;
+          }
+        }
         if (flights.length < MAX_FLIGHT_ROWS) {
           flights.push({
             tailNumber,
@@ -361,6 +542,15 @@ async function scanDataset(path: string): Promise<{
           });
         }
       }
+
+      // Store one histogram value for this test.
+      histograms.allFlightsPerTest.push(allFlights);
+      histograms.hauptFlightsPerTest.push(hauptFlights);
+      histograms.heckFlightsPerTest.push(heckFlights);
+      histograms.hauptBodenlaufPerTest.push(hauptBodenlauf);
+      histograms.hauptOtherConditionsPerTest.push(hauptOtherConditions);
+      histograms.heckBodenlaufPerTest.push(heckBodenlauf);
+      histograms.heckOtherConditionsPerTest.push(heckOtherConditions);
     }
   }
 
@@ -369,7 +559,13 @@ async function scanDataset(path: string): Promise<{
   return {
     counts,
     flights,
-    analytics: makeAnalytics(counts, conditionCounts, partCounts, violations),
+    analytics: makeAnalytics(
+      counts,
+      conditionCounts,
+      partCounts,
+      violations,
+      histograms,
+    ),
     fftAudit: finishFftAudit(fft),
   };
 }
@@ -529,11 +725,440 @@ function recomputeTestRange(test: RecordValue): void {
   if (ends.length) test.Ended = new Date(Math.max(...ends)).toISOString();
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function dayNumber(value: unknown): number {
+  const key = dateKey(value);
+  if (!key) return Number.NaN;
+  return Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, Number(key.slice(8, 10))) / DAY_MS;
+}
+
+// First and last flight day of a test (calendar days), or null if no flight has a usable date.
+function testDayRange(test: RecordValue): { first: number; last: number } | null {
+  const flights = asItems(test.Flights).map(asRecord);
+  const firsts = flights.map((flight) => dayNumber(flight.Started)).filter(Number.isFinite);
+  const lasts = flights
+    .map((flight) => {
+      const ended = dayNumber(flight.Ended);
+      return Number.isFinite(ended) ? ended : dayNumber(flight.Started);
+    })
+    .filter(Number.isFinite);
+  if (!firsts.length || !lasts.length) return null;
+  return { first: Math.min(...firsts), last: Math.max(...lasts) };
+}
+
+// Merges tests of one aircraft when the gap between the last flight of one test and the
+// first flight of the next test is at most `gapDays` calendar days. Chains merge step by step.
+function mergeTestsByGap(
+  tests: RecordValue[],
+  gapDays: number,
+  tail: string,
+  log: string[],
+): RecordValue[] {
+  const limit = Math.max(1, Math.floor(gapDays));
+  const dated = tests
+    .map((test, index) => ({ test, index, range: testDayRange(test) }))
+    .filter((item): item is { test: RecordValue; index: number; range: { first: number; last: number } } => item.range !== null)
+    .sort((a, b) => a.range.first - b.range.first);
+
+  const absorbed = new Set<number>();
+  let current: (typeof dated)[number] | null = null;
+  let currentLast = 0;
+  for (const item of dated) {
+    if (current && item.range.first - currentLast <= limit) {
+      const target = current.test;
+      const gap = item.range.first - currentLast;
+      log.push(
+        `${tail}: merged test ${text(item.test.TestNumber, "?")} into test ${text(target.TestNumber, "?")} (${gap} day${gap === 1 ? "" : "s"} between last and first flight).`,
+      );
+      target.Flights = [...asItems(target.Flights), ...asItems(item.test.Flights)];
+      const targetEnd = timeValue(target.Ended);
+      const itemEnd = timeValue(item.test.Ended);
+      if (Number.isFinite(itemEnd) && !(Number.isFinite(targetEnd) && targetEnd >= itemEnd)) {
+        target.Ended = item.test.Ended;
+      }
+      absorbed.add(item.index);
+      currentLast = Math.max(currentLast, item.range.last);
+    } else {
+      current = item;
+      currentLast = item.range.last;
+    }
+  }
+  return tests.filter((_, index) => !absorbed.has(index));
+}
+
+// Splits a test at every gap where the calendar-day difference between
+// the previous flight's Ended date and the next flight's Started date
+// is greater than or equal to gapDays.
+//
+// Flight records are preserved, including BalanceData, TrackData and FftData.
+function splitTestsByGap(
+  tests: RecordValue[],
+  gapDays: number,
+  tail: string,
+  log: string[],
+): RecordValue[] {
+  const limit = Math.max(1, Math.floor(gapDays));
+
+  // Track existing test numbers so new test numbers remain unique.
+  const usedNumbers = new Set(
+    tests
+      .map((test) => text(test.TestNumber).trim())
+      .filter(Boolean),
+  );
+
+  const numericNumbers = tests
+    .map((test) => text(test.TestNumber).trim())
+    .filter((value) => value !== '')
+    .map(Number)
+    .filter(
+      (value) => Number.isInteger(value) && value >= 0,
+    );
+
+  let nextNumericNumber = numericNumbers.length
+    ? Math.max(...numericNumbers) + 1
+    : 1;
+
+  let generatedSuffix = 1;
+
+  const makeUniqueTestNumber = (
+    originalValue: unknown,
+  ): string | number => {
+    const original = text(originalValue).trim();
+    const wasNumber = typeof originalValue === 'number';
+
+    const numericOriginal =
+      original !== '' &&
+      Number.isInteger(Number(original)) &&
+      Number(original) >= 0;
+
+    if (numericOriginal || original === '') {
+      while (usedNumbers.has(String(nextNumericNumber))) {
+        nextNumericNumber += 1;
+      }
+
+      const result = nextNumericNumber++;
+      usedNumbers.add(String(result));
+
+      return wasNumber ? result : String(result);
+    }
+
+    let candidate = '';
+
+    do {
+      candidate = `${original || 'test'}-split-${generatedSuffix++}`;
+    } while (usedNumbers.has(candidate));
+
+    usedNumbers.add(candidate);
+
+    return candidate;
+  };
+
+  const result: RecordValue[] = [];
+
+  for (const test of tests) {
+    const flights = asItems(test.Flights);
+
+    // A test with fewer than two flights cannot be split.
+    if (flights.length < 2) {
+      result.push(test);
+      continue;
+    }
+
+    const chunks: unknown[][] = [];
+    let currentChunk: unknown[] = [];
+    let previousFlight: RecordValue | null = null;
+
+    for (const flightValue of flights) {
+      const flight = asRecord(flightValue);
+
+      if (previousFlight) {
+        // Prefer the previous flight's end date.
+        // If it is missing, fall back to its start date.
+        const endedDay = dayNumber(previousFlight.Ended);
+
+        const previousEnd = Number.isFinite(endedDay)
+          ? endedDay
+          : dayNumber(previousFlight.Started);
+
+        const nextStart = dayNumber(flight.Started);
+
+        const gap = nextStart - previousEnd;
+
+        // The threshold is inclusive: gap >= limit triggers a split.
+        if (Number.isFinite(gap) && gap >= limit) {
+          chunks.push(currentChunk);
+          currentChunk = [];
+
+          log.push(
+            `${tail}: split test ${text(test.TestNumber, '?')} ` +
+            `before flight ${text(flight.FlightNumber, '—')} ` +
+            `(${gap} calendar days from the previous flight's end; ` +
+            `threshold ${limit}).`,
+          );
+        }
+      }
+
+      // Keep the original flight object and all its nested data.
+      currentChunk.push(flightValue);
+      previousFlight = flight;
+    }
+
+    if (currentChunk.length) {
+      chunks.push(currentChunk);
+    }
+
+    // If no gap qualified, preserve the original test.
+    if (chunks.length === 1) {
+      result.push(test);
+      continue;
+    }
+
+    chunks.forEach((chunk, index) => {
+      // Copy the test metadata and replace only its Flights array.
+      const splitTest: RecordValue = {
+        ...test,
+        Flights: chunk,
+      };
+
+      // The first part keeps the original number.
+      // Additional parts receive unique test numbers.
+      if (index > 0) {
+        splitTest.TestNumber = makeUniqueTestNumber(
+          test.TestNumber,
+        );
+
+        log.push(
+          `${tail}: created test ${text(splitTest.TestNumber, '?')} ` +
+          `from test ${text(test.TestNumber, '?')} ` +
+          `with ${chunk.length} flight(s).`,
+        );
+      }
+
+      // Recalculate the date range for each resulting test.
+      recomputeTestRange(splitTest);
+
+      result.push(splitTest);
+    });
+  }
+
+  return result;
+}
+
+const SMALL_AMP_THRESHOLD = 0.0005;
+
+function normKey(value: unknown): string {
+  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Removes a flight's near-zero balance measurements (|Amplitude| <= threshold) and every
+// reading linked to the same Part + TestCondition: TrackData, FftData, and the matching
+// predicted values and adjustments inside SolveResults. Returns the removed part names.
+function removeSmallAmplitudeFromFlight(flight: RecordValue, threshold: number): string[] {
+  const triggers = new Set<string>();
+  const removedParts = new Set<string>();
+  const keptBalance: RecordValue[] = [];
+  for (const entry of asItems(flight.BalanceData).map(asRecord)) {
+    const amplitude = numberOrNull(entry.Amplitude);
+    if (amplitude != null && Math.abs(amplitude) <= threshold) {
+      triggers.add(`${normKey(entry.Part)}|${normKey(entry.TestCondition)}`);
+      removedParts.add(text(entry.Part));
+    } else {
+      keptBalance.push(entry);
+    }
+  }
+  if (!triggers.size) return [];
+  flight.BalanceData = keptBalance;
+  const matches = (item: RecordValue) => triggers.has(`${normKey(item.Part)}|${normKey(item.TestCondition)}`);
+  flight.TrackData = asItems(flight.TrackData).map(asRecord).filter((item) => !matches(item));
+  flight.FftData = asItems(flight.FftData).map(asRecord).filter((item) => !matches(item));
+  const triggerParts = new Set([...triggers].map((key) => key.split("|")[0]));
+  flight.SolveResults = asItems(flight.SolveResults).map(asRecord).map((solve) => {
+    solve.PredictedBalance = asItems(solve.PredictedBalance).map(asRecord).filter((item) => !matches(item));
+    solve.PredictedTrack = asItems(solve.PredictedTrack).map(asRecord).filter((item) => !matches(item));
+    solve.Adjustments = asItems(solve.Adjustments).map(asRecord).map((adjustment) => {
+      adjustment.Parts = asItems(adjustment.Parts)
+        .map(asRecord)
+        .filter((item) => !triggerParts.has(normKey(item.Part)));
+      return adjustment;
+    });
+    return solve;
+  });
+  return [...removedParts].sort();
+}
+
+// Qa (track & balance quality) setup. CH-53 and H145/BK117 use their documented limits.
+// Any other aircraft type falls back to a structure read from that aircraft's own data
+// (whichever test conditions and part/axis combinations actually appear) with generic
+// default limits, so Qa can still be computed, approximately, for unlisted aircraft types.
+const QA_DEFAULT_FACTOR = 10;
+const QA_CH53_CONDS = ["Bodenlauf", "Hovern OGE", "90 Knoten", "110 Knoten", "130 Knoten"];
+const QA_CH53_COLS: Array<[string, string]> = [["Haupt", "Lateral"], ["Haupt", "Vertikal"], ["Heck", "Radial"], ["Heck", "Axial"]];
+const QA_H145_CONDS = ["Ground", "Hover (IGE)", "80 KIAS", "120 KIAS", "VH"];
+const QA_H145_COLS: Array<[string, string]> = [["Main", "Lateral"], ["Main", "Vertical"], ["Tail", "Radial"], ["Cabin", "Vert Cabi"]];
+const QA_LATERAL_CHANGE_DAY = Date.UTC(2023, 6, 20) / DAY_MS;
+
+type QaFamily = "CH53" | "H145" | "GENERIC";
+type QaConfig = {
+  family: QaFamily;
+  conds: string[];
+  cols: Array<[string, string]>;
+  rotors: string[];
+  trackPart: string;
+  trackLimit: number;
+};
+
+function qaFamily(aircraftType: unknown): QaFamily {
+  const key = normKey(aircraftType);
+  if (key.includes("ch53")) return "CH53";
+  if (key.includes("h145") || key.includes("bk117")) return "H145";
+  return "GENERIC";
+}
+
+// For an unlisted aircraft type: read which test conditions and Part/Axis balance
+// combinations actually appear in this aircraft's own tests, and use the most common
+// TrackData Part as the track rotor. Generic limits (0.2 balance, ~2 in / 50.8 mm track)
+// are then applied uniformly; this is an approximation, not a documented limit table.
+function buildQaConfig(aircraftType: unknown, trackUnits: unknown, tests: RecordValue[]): QaConfig {
+  const family = qaFamily(aircraftType);
+  const mm = !trackUnits || normKey(trackUnits).includes("mm");
+  if (family === "CH53") {
+    return { family, conds: QA_CH53_CONDS, cols: QA_CH53_COLS, rotors: ["Haupt", "Heck"], trackPart: "Haupt", trackLimit: mm ? 50.8 : 2.0 };
+  }
+  if (family === "H145") {
+    return { family, conds: QA_H145_CONDS, cols: QA_H145_COLS, rotors: ["Main", "Tail", "Cabin"], trackPart: "Main", trackLimit: mm ? 40.0 : 40.0 / 25.4 };
+  }
+  const conds: string[] = [];
+  const cols: Array<[string, string]> = [];
+  const colKeys = new Set<string>();
+  const trackPartCounts = new Map<string, number>();
+  const addCond = (value: unknown) => {
+    const name = text(value);
+    if (name && !conds.some((cond) => normKey(cond) === normKey(name))) conds.push(name);
+  };
+  for (const test of tests) {
+    for (const flight of asItems(test.Flights).map(asRecord)) {
+      for (const entry of asItems(flight.BalanceData).map(asRecord)) {
+        addCond(entry.TestCondition);
+        const part = text(entry.Part);
+        const axis = text(entry.Axis);
+        const key = `${normKey(part)}|${normKey(axis)}`;
+        if (part && axis && !colKeys.has(key)) {
+          colKeys.add(key);
+          cols.push([part, axis]);
+        }
+      }
+      for (const entry of asItems(flight.TrackData).map(asRecord)) {
+        addCond(entry.TestCondition);
+        const part = text(entry.Part);
+        if (part) trackPartCounts.set(part, (trackPartCounts.get(part) ?? 0) + 1);
+      }
+    }
+  }
+  const trackPart = [...trackPartCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  const rotors: string[] = [];
+  for (const [rotor] of cols) if (!rotors.some((item) => normKey(item) === normKey(rotor))) rotors.push(rotor);
+  return { family: "GENERIC", conds, cols, rotors, trackPart, trackLimit: mm ? 50.8 : 2.0 };
+}
+
+function qaConditionKey(cfg: QaConfig, cond: unknown): string {
+  const key = normKey(cond);
+  if (key === "parallel") {
+    if (cfg.family === "H145") return normKey("Ground");
+    if (cfg.family === "CH53") return normKey("Bodenlauf");
+  }
+  return key;
+}
+
+function qaBalanceLimit(cfg: QaConfig, rotor: string, axis: string, cond: string, flightDay: number): number {
+  if (cfg.family === "CH53") {
+    if (normKey(axis) === "lateral") return Number.isFinite(flightDay) && flightDay < QA_LATERAL_CHANGE_DAY ? 0.3 : 0.25;
+    return 0.2;
+  }
+  if (cfg.family === "H145") {
+    const base: Record<string, number> = { ground: 0.4, hoverige: 0.1, "80kias": 0.15, "120kias": 0.15, vh: 0.15 };
+    if (normKey(rotor) === "tail" && normKey(cond) === "ground") return 0.2;
+    return base[normKey(cond)] ?? 0.2;
+  }
+  return 0.2;
+}
+
+// Qa per rotor part for one flight: the average, over every (condition x part/axis) term,
+// of value / limit, with a missing measurement counted as 10x its limit. Returns null when
+// this aircraft's Qa structure could not be determined (no usable conditions or columns).
+function computeFlightRotorQa(flight: RecordValue, cfg: QaConfig, flightDay: number): Map<string, number> | null {
+  if (!cfg.conds.length || !cfg.cols.length) return null;
+  const track = new Map<string, number>();
+  for (const entry of asItems(flight.TrackData).map(asRecord)) {
+    if (normKey(entry.Part) === normKey(cfg.trackPart)) {
+      const value = numberOrNull(entry.TrackSplit);
+      if (value != null) track.set(qaConditionKey(cfg, entry.TestCondition), Math.abs(value));
+    }
+  }
+  const balance = new Map<string, number>();
+  for (const entry of asItems(flight.BalanceData).map(asRecord)) {
+    const value = numberOrNull(entry.Amplitude);
+    if (value != null) {
+      balance.set(`${qaConditionKey(cfg, entry.TestCondition)}|${normKey(entry.Part)}|${normKey(entry.Axis)}`, Math.abs(value));
+    }
+  }
+  const terms: Array<{ rotor: string; ratio: number }> = [];
+  for (const cond of cfg.conds) {
+    const key = qaConditionKey(cfg, cond);
+    const trackValue = track.get(key);
+    terms.push({ rotor: cfg.trackPart, ratio: trackValue == null ? QA_DEFAULT_FACTOR : trackValue / cfg.trackLimit });
+    for (const [rotor, axis] of cfg.cols) {
+      const value = balance.get(`${key}|${normKey(rotor)}|${normKey(axis)}`);
+      const limit = qaBalanceLimit(cfg, rotor, axis, cond, flightDay);
+      terms.push({ rotor, ratio: value == null ? QA_DEFAULT_FACTOR : value / limit });
+    }
+  }
+  const rotorQa = new Map<string, number>();
+  for (const rotor of cfg.rotors) {
+    const ratios = terms.filter((term) => normKey(term.rotor) === normKey(rotor)).map((term) => term.ratio);
+    if (ratios.length) rotorQa.set(rotor, ratios.reduce((sum, value) => sum + value, 0) / ratios.length);
+  }
+  return rotorQa;
+}
+
+// Deletes an entire test when any rotor's Qa gets worse from one flight to the next flight
+// within that same test (comparing flights in their stored order, not sorted by date).
+function removeTestsWithWorseningQa(
+  tests: RecordValue[],
+  cfg: QaConfig,
+  tail: string,
+  log: string[],
+): RecordValue[] {
+  return tests.filter((test) => {
+    let previous: Map<string, number> | null = null;
+    let reason = "";
+    for (const flight of asItems(test.Flights).map(asRecord)) {
+      const current = computeFlightRotorQa(flight, cfg, dayNumber(flight.Started));
+      if (previous && current) {
+        for (const [rotor, newQa] of current) {
+          const oldQa = previous.get(rotor);
+          if (oldQa != null && newQa > oldQa && !reason) {
+            reason = `${rotor} Qa increased (${oldQa.toFixed(4)} -> ${newQa.toFixed(4)})`;
+          }
+        }
+      }
+      if (current) previous = current;
+    }
+    if (reason) {
+      log.push(`${tail}: removed test ${text(test.TestNumber, "?")} (${reason}).`);
+      return false;
+    }
+    return true;
+  });
+}
+
 function applyIntraAircraftRules(
   aircraft: RecordValue,
   options: CleanupOptions,
   log: string[],
   separatedTests: unknown[],
+  aircraftType: unknown,
+  trackUnits: unknown,
 ): RecordValue {
   const tail = text(aircraft.TailNumber);
   if (options.removeEmptyFlights) {
@@ -656,12 +1281,33 @@ function applyIntraAircraftRules(
   }
   if (options.mergeEvidenceBasedChains)
     log.push(`${tail}: evidence-based test-chain merging was not run; review the README's unresolved chains before treating merged history as final.`);
+  if (options.mergeByDays) tests = mergeTestsByGap(tests, options.mergeGapDays, tail, log);
+  if (options.splitByDays) tests = splitTestsByGap(tests, options.splitGapDays, tail, log);
+  if (options.removeSmallAmplitude) {
+    const smallAmpParts = new Set<string>();
+    for (const test of tests) {
+      for (const flight of asItems(test.Flights).map(asRecord)) {
+        for (const part of removeSmallAmplitudeFromFlight(flight, SMALL_AMP_THRESHOLD)) smallAmpParts.add(part);
+      }
+    }
+    if (smallAmpParts.size)
+      log.push(`${tail}: removed near-zero balance measurements (<= ${SMALL_AMP_THRESHOLD} ips) and linked readings for ${[...smallAmpParts].join(", ")}.`);
+  }
+  if (options.removeWorseningQa) {
+    const qaConfig = buildQaConfig(aircraftType, trackUnits, tests);
+    tests = removeTestsWithWorseningQa(tests, qaConfig, tail, log);
+  }
   aircraft.Tests = tests;
   return aircraft;
 }
 
+const EOL = "\r\n";
+// 2-space indent, CRLF, nested to the given depth (matches the original file)
+const pretty = (value: unknown, depth: number) =>
+  JSON.stringify(value, null, 2).split("\n").join(EOL + "  ".repeat(depth));
+
 async function writeObjectFile(path: string, value: unknown): Promise<void> {
-  await writeFile(path, JSON.stringify(value), "utf8");
+  await writeFile(path, pretty(value, 2), "utf8");
 }
 
 async function writeDataset(
@@ -672,27 +1318,26 @@ async function writeDataset(
   separatedTests: unknown[],
 ): Promise<void> {
   const output = createWriteStream(outputPath, { flags: "w" });
-  const write = async (value: string) => {
+  const write = async (value: string | Buffer) => {
     if (!output.write(value)) await once(output, "drain");
   };
   const meta = { ...metadata };
   delete meta.Aircraft;
   const currentSeparated = asItems(meta.AndreasSeparatedTests);
   if (separatedTests.length) meta.AndreasSeparatedTests = [...currentSeparated, ...separatedTests];
-  const entries = Object.entries(meta);
-  await write("{");
-  for (const [index, [key, value]] of entries.entries()) {
-    if (index) await write(",");
-    await write(`${JSON.stringify(key)}:${JSON.stringify(value)}`);
+
+  await write("{" + EOL);
+  for (const [key, value] of Object.entries(meta)) {
+    await write(`  ${JSON.stringify(key)}: ${pretty(value, 1)},${EOL}`);
   }
-  if (entries.length) await write(",");
-  await write('"Aircraft":[');
+  await write(`  "Aircraft": [${EOL}`);
   let written = 0;
   for (const record of records) {
-    if (written) await write(",");
+    if (written) await write("," + EOL);
+    await write("    ");
     if ("path" in record) {
       const input = createReadStream(record.path);
-      for await (const chunk of input) await write(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
+      for await (const chunk of input) await write(chunk as Buffer);
     } else {
       const paths = groupFiles.get(record.group) ?? [];
       const aircraftGroup = (
@@ -706,12 +1351,12 @@ async function writeDataset(
         const combinedTests = aircraftGroup.flatMap((item) => asItems(item.Tests).map(asRecord));
         combinedTests.sort((a, b) => testFirstDate(a) - testFirstDate(b));
         keeper.Tests = combinedTests;
-        await write(JSON.stringify(keeper));
+        await write(pretty(keeper, 2));
       }
     }
     written += 1;
   }
-  await write("]}");
+  await write(`${EOL}  ]${EOL}}`);
   output.end();
   await once(output, "finish");
 }
@@ -753,6 +1398,8 @@ export async function previewCleanup(
       options,
       operations,
       separatedTests,
+      metadata.AircraftType,
+      metadata.TrackUnits,
     );
     const canonical = digits(tail);
     const knownPair = pairByDigits.get(canonical);

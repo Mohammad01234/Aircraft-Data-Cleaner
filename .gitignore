@@ -57,3 +57,5 @@ Thumbs.db
 # Local uploaded reference assets - keep on PC, exclude from GitHub
 
 /attached_assets/
+*.bak
+.idea/

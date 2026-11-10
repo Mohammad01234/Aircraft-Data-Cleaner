@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RotorTestCount } from './rotorTestCount';
 
 export interface DatasetCounts {
   aircraft: number;
@@ -14,4 +15,8 @@ export interface DatasetCounts {
   trackReadings: number;
   fftCaptures: number;
   fftSamples: number;
+  /** All flights divided by all tests (0 when there are no tests). */
+  averageFlightsPerTest?: number;
+  /** Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor. */
+  testsPerRotor?: RotorTestCount[];
 }

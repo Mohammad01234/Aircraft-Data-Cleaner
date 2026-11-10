@@ -34,6 +34,11 @@ type Counts = {
   trackReadings: number;
   fftCaptures: number;
   fftSamples: number;
+  // All flights / all tests (0 when there are no tests).
+  averageFlightsPerTest?: number;
+  // Tests per rotor (Part); a test counts for a rotor only if one of its flights
+  // has a BalanceData or TrackData entry for that rotor.
+  testsPerRotor?: Array<{ rotor: string; tests: number }>;
 };
 type BalanceReading = {
   testCondition: string;
@@ -487,6 +492,8 @@ async function scanDataset(path: string): Promise<{
     findings: new Map<string, number>(),
   };
 
+  const testsPerRotor = new Map<string, number>();
+
   for await (const aircraft of aircraftItems(path)) {
     counts.aircraft += 1;
     buildFftAudit(aircraft, fft, counts);
@@ -494,6 +501,17 @@ async function scanDataset(path: string): Promise<{
     for (const testValue of asItems(aircraft.Tests)) {
       const test = asRecord(testValue);
       counts.tests += 1;
+
+      // Rotors (Parts) with at least one BalanceData or TrackData entry in this test.
+      const testRotors = new Set<string>();
+      for (const flightValue of asItems(test.Flights)) {
+        const flight = asRecord(flightValue);
+        for (const entry of [...asItems(flight.BalanceData), ...asItems(flight.TrackData)]) {
+          const rotor = text(asRecord(entry).Part).trim();
+          if (rotor) testRotors.add(rotor);
+        }
+      }
+      for (const rotor of testRotors) testsPerRotor.set(rotor, (testsPerRotor.get(rotor) ?? 0) + 1);
       const testNumber = text(test.TestNumber, "—");
 
       let allFlights = 0;
@@ -622,6 +640,11 @@ async function scanDataset(path: string): Promise<{
     }
   }
 
+  counts.averageFlightsPerTest = counts.tests > 0 ? counts.flights / counts.tests : 0;
+  counts.testsPerRotor = [...testsPerRotor.entries()]
+    .map(([rotor, tests]) => ({ rotor, tests }))
+    .sort((a, b) => a.rotor.localeCompare(b.rotor));
+
   // A separate token pass counts FFT containers as captures, including captures
   // with no transducer samples. buildFftAudit already counts these per aircraft.
   return {
@@ -711,6 +734,15 @@ function loadSavedSessions(): void {
       };
       if (!session.previewPath) delete session.preview;
       sessions.set(session.id, session);
+      // Sessions saved before averageFlightsPerTest/testsPerRotor existed: rescan once.
+      if (session.counts.testsPerRotor == null) {
+        void scanDataset(session.cleanedPath ?? session.rawPath)
+          .then((scanned) => {
+            session.counts = scanned.counts;
+            return saveSession(session);
+          })
+          .catch(() => undefined);
+      }
     } catch {
       try {
         if (Date.now() - statSync(directory).mtimeMs > 24 * 60 * 60 * 1000) {

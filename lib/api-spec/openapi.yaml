@@ -239,6 +239,22 @@ components:
         trackReadings: { type: integer }
         fftCaptures: { type: integer }
         fftSamples: { type: integer }
+        averageFlightsPerTest:
+          type: number
+          description: All flights divided by all tests (0 when there are no tests).
+        testsPerRotor:
+          type: array
+          description: >-
+            Number of tests per rotor (Part). A test counts for a rotor only if at least
+            one of its flights has a BalanceData or TrackData entry for that rotor.
+          items:
+            $ref: "#/components/schemas/RotorTestCount"
+    RotorTestCount:
+      type: object
+      required: [rotor, tests]
+      properties:
+        rotor: { type: string }
+        tests: { type: integer }
     CleanupOptions:
       type: object
       required: [removeEmptyFlights, mergeByDays, mergeGapDays, splitByDays, splitGapDays, removeSmallAmplitude, removeWorseningQ, mergeKnownTailVariants, removeJunkAircraft, applyDateCorrections, removeTargetedTests, mergeEvidenceBasedChains]

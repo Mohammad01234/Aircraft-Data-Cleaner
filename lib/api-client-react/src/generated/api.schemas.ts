@@ -9,6 +9,11 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface RotorTestCount {
+  rotor: string;
+  tests: number;
+}
+
 export interface DatasetCounts {
   aircraft: number;
   tests: number;
@@ -17,6 +22,10 @@ export interface DatasetCounts {
   trackReadings: number;
   fftCaptures: number;
   fftSamples: number;
+  /** All flights divided by all tests (0 when there are no tests). */
+  averageFlightsPerTest?: number;
+  /** Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor. */
+  testsPerRotor?: RotorTestCount[];
 }
 
 export interface DataSession {

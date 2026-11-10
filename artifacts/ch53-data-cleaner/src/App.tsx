@@ -516,6 +516,10 @@ function Workbench() {
                   <div className="grid grid-cols-2 gap-px bg-[#e5e0d5] sm:grid-cols-4">
                     {countFields.slice(0, 4).map(([key, label]) => <CountCell key={key} label={label} value={counts?.[key] ?? 0} />)}
                   </div>
+                  <div className="grid grid-cols-2 gap-px border-t border-[#e5e0d5] bg-[#e5e0d5] sm:grid-cols-4" data-testid="metrics-tests-per-rotor">
+                    <CountCell label="Avg flights / test" value={counts?.averageFlightsPerTest ?? 0} decimals={2} />
+                    {(counts?.testsPerRotor ?? []).map(({ rotor, tests }) => <CountCell key={rotor} label={`Tests · ${rotor}`} value={tests} />)}
+                  </div>
                   <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 sm:px-6">
                     <div className="flex items-center gap-2 text-[10px] text-[#697775]"><Clock3 size={13} className="text-[#a77a31]" /> Session <strong className="font-mono text-[#344b4d]">active until closed</strong></div>
                     <a href={`/data-app/?sessionId=${encodeURIComponent(session.sessionId)}`} className="inline-flex items-center gap-2 text-[10px] font-bold text-[#24646a] hover:text-[#17484f]" data-testid="link-session-analytics">Open session analytics <ArrowRight size={13} /></a>
@@ -874,10 +878,10 @@ function HistogramCard({
   );
 }
 
-function CountCell({ label, value, compact = false }: { label: string; value: number; compact?: boolean }) {
+function CountCell({ label, value, compact = false, decimals }: { label: string; value: number; compact?: boolean; decimals?: number }) {
   return <div className={`bg-[#f9f7f0] ${compact ? 'px-3 py-4' : 'px-4 py-4 sm:px-5'}`} data-testid={`metric-${label.toLowerCase().replaceAll(' ', '-')}`}>
     <div className="font-mono text-[8px] uppercase tracking-[.09em] text-[#858b83]">{label}</div>
-    <div className={`mt-1.5 font-extrabold tracking-[-.05em] text-[#2d4145] ${compact ? 'text-[17px]' : 'text-[20px]'}`}>{value.toLocaleString()}</div>
+    <div className={`mt-1.5 font-extrabold tracking-[-.05em] text-[#2d4145] ${compact ? 'text-[17px]' : 'text-[20px]'}`}>{decimals != null ? value.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : value.toLocaleString()}</div>
   </div>;
 }
 

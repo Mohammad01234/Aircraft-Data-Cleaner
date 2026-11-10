@@ -23,7 +23,7 @@ const countFields = [
 ] as const;
 type BooleanOptionKey = { [K in keyof CleanupOptions]: CleanupOptions[K] extends boolean ? K : never }[keyof CleanupOptions];
 const cleanupChoices: { key: BooleanOptionKey; title: string; detail: string }[] = [
-  { key: 'removeEmptyFlights', title: 'Remove empty flights', detail: 'Flights with no retained reading data' },
+  { key: 'removeEmptyFlights', title: 'Remove empty flights', detail: 'Flights with no BalanceData and no TrackData' },
   { key: 'mergeByDays', title: 'Merge regarding chosen days', detail: 'Merge tests that are only a chosen days apart' },
   { key: 'splitByDays', title: 'split regarding chosen days', detail: 'split tests that are only a chosen days apart' },
   { key: 'removeSmallAmplitude', title: 'Remove near-zero balance measurements', detail: 'Drops balance readings at or below 0.0005 ips, and linked track/FFT/predicted data' },
@@ -517,7 +517,7 @@ function Workbench() {
                     {countFields.slice(0, 4).map(([key, label]) => <CountCell key={key} label={label} value={counts?.[key] ?? 0} />)}
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 sm:px-6">
-                    <div className="flex items-center gap-2 text-[10px] text-[#697775]"><Clock3 size={13} className="text-[#a77a31}" /> Session expires in <strong className="font-mono text-[#344b4d]">{formatDuration(session.expiresInSeconds)}</strong></div>
+                    <div className="flex items-center gap-2 text-[10px] text-[#697775]"><Clock3 size={13} className="text-[#a77a31]" /> Session <strong className="font-mono text-[#344b4d]">active until closed</strong></div>
                     <a href={`/data-app/?sessionId=${encodeURIComponent(session.sessionId)}`} className="inline-flex items-center gap-2 text-[10px] font-bold text-[#24646a] hover:text-[#17484f]" data-testid="link-session-analytics">Open session analytics <ArrowRight size={13} /></a>
                   </div>
                 </div>
@@ -793,7 +793,7 @@ function Workbench() {
                 </div>
                 <ActivityPanel events={shownEvents} />
               </section>
-              <div className="mt-5 flex items-center justify-center gap-2 font-mono text-[8px] uppercase tracking-[.1em] text-[#9a9b90]"><History size={12} /> Temporary session · source snapshot retained until expiry or close</div>
+              <div className="mt-5 flex items-center justify-center gap-2 font-mono text-[8px] uppercase tracking-[.1em] text-[#9a9b90]"><History size={12} /> Source snapshot retained until the session is closed</div>
             </>
           )}
         </div>

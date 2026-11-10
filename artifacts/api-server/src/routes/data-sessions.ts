@@ -56,7 +56,7 @@ router.get("/data-sessions", (req, res): void => {
   }
   const session = getDataSession(parsed.data.sessionId);
   if (!session) {
-    res.status(404).json({ error: "This temporary data session has expired or was closed." });
+    res.status(404).json({ error: "This data session was closed. Please import the file again." });
     return;
   }
   res.json(GetDataSessionResponse.parse(session));
@@ -71,7 +71,7 @@ router.get("/data-sessions/flights", (req, res): void => {
   const { sessionId, search, tailNumber, condition, page = 1, limit = 25 } = parsed.data;
   const result = getSessionFlights(sessionId, { search, tailNumber, condition, page, limit });
   if (!result) {
-    res.status(404).json({ error: "This temporary data session has expired or was closed." });
+    res.status(404).json({ error: "This data session was closed. Please import the file again." });
     return;
   }
   res.json(GetSessionFlightsResponse.parse(result));
@@ -85,7 +85,7 @@ router.get("/data-sessions/:sessionId/analytics", (req, res): void => {
   }
   const result = getSessionAnalytics(parsed.data.sessionId);
   if (!result) {
-    res.status(404).json({ error: "This temporary data session has expired or was closed." });
+    res.status(404).json({ error: "This data session was closed. Please import the file again." });
     return;
   }
   res.json(GetSessionAnalyticsResponse.parse(result));
@@ -99,7 +99,7 @@ router.get("/data-sessions/:sessionId/fft-audit", (req, res): void => {
   }
   const result = getFftAudit(parsed.data.sessionId);
   if (!result) {
-    res.status(404).json({ error: "This temporary data session has expired or was closed." });
+    res.status(404).json({ error: "This data session was closed. Please import the file again." });
     return;
   }
   res.json(GetFftAuditResponse.parse(result));
@@ -123,7 +123,7 @@ router.post("/data-sessions/:sessionId/clean/preview", async (req, res): Promise
   try {
     const result = await previewCleanup(parsedParams.data.sessionId, parsedBody.data);
     if (!result) {
-      res.status(404).json({ error: "This temporary data session has expired or was closed." });
+      res.status(404).json({ error: "This data session was closed. Please import the file again." });
       return;
     }
     res.json(PreviewCleanupResponse.parse(result));
@@ -143,7 +143,7 @@ router.post("/data-sessions/:sessionId/clean/apply", async (req, res): Promise<v
   try {
     const result = await applyCleanup(parsed.data.sessionId);
     if (!result) {
-      res.status(404).json({ error: "This temporary data session has expired or was closed." });
+      res.status(404).json({ error: "This data session was closed. Please import the file again." });
       return;
     }
     res.json(ApplyCleanupResponse.parse(result));

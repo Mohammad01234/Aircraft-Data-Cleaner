@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { createReadStream, createWriteStream, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { once } from "node:events";
 import { chain } from "stream-chain";
 import { parser } from "stream-json";
@@ -89,7 +89,6 @@ type Session = {
   filename: string;
   bytes: number;
   importedAt: string;
-  expiresAt: number;
   counts: Counts;
   log: string[];
   flights: FlightReading[];
@@ -101,7 +100,14 @@ type Session = {
 };
 
 const sessions = new Map<string, Session>();
-const SESSION_TTL_MS = 30 * 60 * 1000;
+// Sessions do not expire and survive server restarts: each session lives in its own
+// folder under SESSIONS_ROOT (uploaded file, preview/cleaned file and a session.json
+// with its details) until it is closed in the app. Override the location with the
+// DATA_SESSIONS_DIR environment variable.
+const SESSIONS_ROOT =
+  process.env.DATA_SESSIONS_DIR ||
+  join(process.env.LOCALAPPDATA || join(homedir(), ".local", "share"), "ch53-data-cleaner", "sessions");
+const SESSION_FILE = "session.json";
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_FLIGHT_ROWS = 100_000;
 const PAIRS: Array<[string, string]> = [
@@ -117,8 +123,83 @@ const pairByDigits = new Map<string, [string, string]>(
   PAIRS.map((pair) => [digits(pair[0]), pair]),
 );
 
+// --------------------------------------------------------------------------
+// Number-preserving JSON
+//
+// Every number in the uploaded file is read as a RawNumber, which still
+// behaves like a normal number in comparisons and arithmetic (valueOf), but
+// also remembers its exact source text. When written back out, it emits that
+// exact text, so trailing zeros (1.2300), exponent notation/case (1.23E+00)
+// and full decimal precision are kept instead of being reformatted.
+// --------------------------------------------------------------------------
+const jsonWithRaw = JSON as unknown as JSON & { rawJSON(text: string): unknown };
+
+class RawNumber {
+  constructor(readonly raw: string) {}
+  valueOf(): number {
+    return Number(this.raw);
+  }
+  toString(): string {
+    return String(Number(this.raw));
+  }
+  toJSON(): unknown {
+    return jsonWithRaw.rawJSON(this.raw);
+  }
+}
+
+// Numbers are tagged with this prefix while stream-json assembles values, then
+// turned into RawNumber objects. It is unique per run, so it cannot collide.
+const RAW_NUMBER_MARK = `\u0000raw-number-${randomUUID()}:`;
+
+type JsonToken = { name: string; value?: unknown };
+
+function tagNumberToken(token: JsonToken): JsonToken {
+  if (token.name === "numberValue") {
+    return { name: "stringValue", value: RAW_NUMBER_MARK + String(token.value) };
+  }
+  if (token.name === "stringValue" && String(token.value).startsWith(RAW_NUMBER_MARK)) {
+    throw new Error("Internal number placeholder collided with file content; please re-upload.");
+  }
+  return token;
+}
+
+function reviveRawNumbers(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.startsWith(RAW_NUMBER_MARK)
+      ? new RawNumber(value.slice(RAW_NUMBER_MARK.length))
+      : value;
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) value[index] = reviveRawNumbers(value[index]);
+    return value;
+  }
+  if (value && typeof value === "object") {
+    const record = value as RecordValue;
+    for (const key of Object.keys(record)) record[key] = reviveRawNumbers(record[key]);
+  }
+  return value;
+}
+
+function parsePreservingNumbers(source: string): unknown {
+  return JSON.parse(source, (_key, value, context?: { source?: string }) =>
+    typeof value === "number" && context?.source != null ? new RawNumber(context.source) : value,
+  );
+}
+
+// Converts RawNumber values to plain numbers (for data sent to the browser).
+function plainNumbers(value: unknown): unknown {
+  if (value instanceof RawNumber) return value.valueOf();
+  if (Array.isArray(value)) return value.map(plainNumbers);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as RecordValue).map(([key, item]) => [key, plainNumbers(item)]),
+    );
+  }
+  return value;
+}
+
 function asRecord(value: unknown): RecordValue {
-  return value && typeof value === "object" && !Array.isArray(value)
+  return value && typeof value === "object" && !Array.isArray(value) && !(value instanceof RawNumber)
     ? (value as RecordValue)
     : {};
 }
@@ -133,7 +214,8 @@ function text(value: unknown, fallback = ""): string {
 }
 
 function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  const number = value instanceof RawNumber ? value.valueOf() : value;
+  return typeof number === "number" && Number.isFinite(number) ? number : null;
 }
 
 function dateKey(value: unknown): string {
@@ -271,21 +353,6 @@ function makeAnalytics(
       counts.tests > 0 ? counts.flights / counts.tests : 0,
   };
 }
-  return {
-    counts,
-    byCondition: [...conditionCounts.entries()]
-      .map(([name, flights]) => ({ name, flights }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    byPart: [...partCounts.entries()]
-      .map(([name, readings]) => ({ name, readings }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    compliance: [...violations.entries()].map(([axis, value]) => ({
-      axis,
-      limit: value.limit,
-      violations: value.count,
-    })),
-  };
-}
 
 
 async function jsonRootIsArray(path: string): Promise<boolean> {
@@ -315,12 +382,12 @@ async function* aircraftAtPath(
 
   const stream = chain(
     filter
-      ? [...stages, pick({ filter }), streamArray()]
-      : [...stages, streamArray()],
+      ? [...stages, pick({ filter }), tagNumberToken, streamArray()]
+      : [...stages, tagNumberToken, streamArray()],
   );
 
   for await (const item of stream) {
-    const value = asRecord((item as { value?: unknown }).value);
+    const value = asRecord(reviveRawNumbers((item as { value?: unknown }).value));
     if (Object.keys(value).length) yield value;
   }
 }
@@ -376,6 +443,7 @@ async function collectMetadata(path: string): Promise<RecordValue> {
     source,
     parser(),
     ignore({ filter: "Aircraft" }),
+    tagNumberToken,
     streamObject(),
   ]);
 
@@ -387,7 +455,7 @@ async function collectMetadata(path: string): Promise<RecordValue> {
       value: unknown;
     };
 
-    metadata[key] = value;
+    metadata[key] = reviveRawNumbers(value);
   }
 
   return metadata;
@@ -466,12 +534,12 @@ async function scanDataset(path: string): Promise<{
             text(item.Part, "Unknown"),
             (partCounts.get(text(item.Part, "Unknown")) ?? 0) + 1,
           );
-          return {
+          return plainNumbers({
             TestCondition: item.TestCondition,
             Part: item.Part,
             TrackSplit: item.TrackSplit,
             BladeHeights: item.BladeHeights,
-          };
+          }) as RecordValue;
         });
         const conditions = new Set<string>();
         for (const reading of balanceData) conditions.add(reading.testCondition);
@@ -576,29 +644,85 @@ function sessionResponse(session: Session): RecordValue {
     filename: session.filename,
     bytes: session.bytes,
     importedAt: session.importedAt,
-    expiresInSeconds: Math.max(0, Math.ceil((session.expiresAt - Date.now()) / 1000)),
+    expiresInSeconds: 0, // sessions no longer expire
     cleaned: Boolean(session.cleanedPath),
     counts: session.counts,
     log: session.log,
   };
 }
 
-function touch(session: Session): void {
-  session.expiresAt = Date.now() + SESSION_TTL_MS;
-}
 
 async function removeSession(session: Session): Promise<void> {
   sessions.delete(session.id);
+  savesInProgress.delete(session.id);
   await rm(session.directory, { recursive: true, force: true });
 }
 
-const expiryTimer = setInterval(() => {
-  const now = Date.now();
-  for (const session of sessions.values()) {
-    if (session.expiresAt <= now) void removeSession(session);
+// Saves are queued per session so two writes never overlap.
+const savesInProgress = new Map<string, Promise<void>>();
+
+function saveSession(session: Session): Promise<void> {
+  const previous = savesInProgress.get(session.id) ?? Promise.resolve();
+  const next = previous.then(async () => {
+    if (!sessions.has(session.id)) return;
+    // File paths are stored by name only and rebuilt on load, so the folder can move.
+    const stored = {
+      ...session,
+      directory: undefined,
+      rawPath: basename(session.rawPath),
+      previewPath: session.previewPath && basename(session.previewPath),
+      cleanedPath: session.cleanedPath && basename(session.cleanedPath),
+    };
+    const target = join(session.directory, SESSION_FILE);
+    const temporary = `${target}.tmp`;
+    await writeFile(temporary, JSON.stringify(stored), "utf8");
+    await rename(temporary, target);
+  });
+  const settled = next.catch(() => undefined);
+  savesInProgress.set(session.id, settled);
+  return next;
+}
+
+// Reloads every saved session when the server starts. A folder without a valid
+// session.json is a leftover of an interrupted upload; it is skipped, and removed
+// once it is more than a day old.
+function loadSavedSessions(): void {
+  if (!existsSync(SESSIONS_ROOT)) return;
+  for (const entry of readdirSync(SESSIONS_ROOT, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const directory = join(SESSIONS_ROOT, entry.name);
+    try {
+      const stored = parsePreservingNumbers(
+        readFileSync(join(directory, SESSION_FILE), "utf8"),
+      ) as Session;
+      const rawPath = join(directory, basename(stored.rawPath));
+      if (!existsSync(rawPath)) throw new Error("source file missing");
+      const fileIn = (name?: string) => {
+        const path = name ? join(directory, basename(name)) : undefined;
+        return path && existsSync(path) ? path : undefined;
+      };
+      const session: Session = {
+        ...stored,
+        id: entry.name,
+        directory,
+        rawPath,
+        previewPath: fileIn(stored.previewPath),
+        cleanedPath: fileIn(stored.cleanedPath),
+      };
+      if (!session.previewPath) delete session.preview;
+      sessions.set(session.id, session);
+    } catch {
+      try {
+        if (Date.now() - statSync(directory).mtimeMs > 24 * 60 * 60 * 1000) {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      } catch {
+        // Leave it; it is checked again on the next start.
+      }
+    }
   }
-}, 60_000);
-expiryTimer.unref();
+}
+
 
 export async function createDataSession(
   request: NodeJS.ReadableStream,
@@ -609,7 +733,8 @@ export async function createDataSession(
     throw new Error("The upload is larger than the 2 GB session limit.");
   }
   const id = randomUUID();
-  const directory = await mkdtemp(join(tmpdir(), `ch53-session-${id}-`));
+  const directory = join(SESSIONS_ROOT, id);
+  await mkdir(directory, { recursive: true });
   const rawPath = join(directory, "source.json");
   let bytes = 0;
   const output = createWriteStream(rawPath, { flags: "wx" });
@@ -636,7 +761,6 @@ export async function createDataSession(
       filename: filename.trim() || "aircraft-data.json",
       bytes,
       importedAt: new Date().toISOString(),
-      expiresAt: Date.now() + SESSION_TTL_MS,
       counts: scanned.counts,
       flights: scanned.flights,
       analytics: scanned.analytics,
@@ -649,9 +773,11 @@ export async function createDataSession(
       separatedTests: [],
     };
     sessions.set(id, session);
+    await saveSession(session);
     return sessionResponse(session);
   } catch (error) {
     output.destroy();
+    sessions.delete(id);
     await rm(directory, { recursive: true, force: true });
     throw error;
   }
@@ -659,22 +785,19 @@ export async function createDataSession(
 
 export function getDataSession(id: string): RecordValue | null {
   const session = sessions.get(id);
-  if (!session || session.expiresAt <= Date.now()) return null;
-  touch(session);
+  if (!session) return null;
   return sessionResponse(session);
 }
 
 export function getSessionAnalytics(id: string): Analytics | null {
   const session = sessions.get(id);
-  if (!session || session.expiresAt <= Date.now()) return null;
-  touch(session);
+  if (!session) return null;
   return session.analytics;
 }
 
 export function getFftAudit(id: string): FftAudit | null {
   const session = sessions.get(id);
-  if (!session || session.expiresAt <= Date.now()) return null;
-  touch(session);
+  if (!session) return null;
   return session.fftAudit;
 }
 
@@ -683,8 +806,7 @@ export function getSessionFlights(
   filters: { search?: string; tailNumber?: string; condition?: string; page: number; limit: number },
 ): { items: FlightReading[]; page: number; limit: number; total: number } | null {
   const session = sessions.get(id);
-  if (!session || session.expiresAt <= Date.now()) return null;
-  touch(session);
+  if (!session) return null;
   const needle = (filters.search ?? "").toLocaleLowerCase();
   const matched = session.flights.filter((flight) => {
     const matchesTail = !filters.tailNumber || flight.tailNumber === filters.tailNumber;
@@ -717,12 +839,21 @@ function testFirstDate(test: RecordValue): number {
   return values.length ? Math.min(...values) : timeValue(test.Started);
 }
 
+// Sets a test's Started/Ended to the earliest flight Started and latest flight Ended.
+// The flight's original date value is copied exactly as written (no reformatting
+// or time-zone conversion).
 function recomputeTestRange(test: RecordValue): void {
   const flights = asItems(test.Flights).map(asRecord);
-  const starts = flights.map((flight) => timeValue(flight.Started)).filter(Number.isFinite);
-  const ends = flights.map((flight) => timeValue(flight.Ended)).filter(Number.isFinite);
-  if (starts.length) test.Started = new Date(Math.min(...starts)).toISOString();
-  if (ends.length) test.Ended = new Date(Math.max(...ends)).toISOString();
+  let earliest: { time: number; value: unknown } | null = null;
+  let latest: { time: number; value: unknown } | null = null;
+  for (const flight of flights) {
+    const start = timeValue(flight.Started);
+    if (Number.isFinite(start) && (!earliest || start < earliest.time)) earliest = { time: start, value: flight.Started };
+    const end = timeValue(flight.Ended);
+    if (Number.isFinite(end) && (!latest || end > latest.time)) latest = { time: end, value: flight.Ended };
+  }
+  if (earliest) test.Started = earliest.value;
+  if (latest) test.Ended = latest.value;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -825,7 +956,7 @@ function splitTestsByGap(
     originalValue: unknown,
   ): string | number => {
     const original = text(originalValue).trim();
-    const wasNumber = typeof originalValue === 'number';
+    const wasNumber = typeof originalValue === 'number' || originalValue instanceof RawNumber;
 
     const numericOriginal =
       original !== '' &&
@@ -1162,22 +1293,36 @@ function applyIntraAircraftRules(
 ): RecordValue {
   const tail = text(aircraft.TailNumber);
   if (options.removeEmptyFlights) {
+    // A flight is "empty" when it has neither BalanceData nor TrackData.
+    // FftData is ignored: a flight with only FFT captures is still removed.
+    // Missing, null, [], {} and "" all count as empty.
+    const isEmptyField = (value: unknown): boolean =>
+      value == null ||
+      (typeof value === "string" && value.length === 0) ||
+      (Array.isArray(value) && value.length === 0) ||
+      (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0);
     for (const testValue of asItems(aircraft.Tests)) {
       const test = asRecord(testValue);
       const flights = asItems(test.Flights);
       const kept = flights.filter((flightValue) => {
         const flight = asRecord(flightValue);
-        const hasBalance = asItems(flight.BalanceData).length > 0;
-        const hasTrack = asItems(flight.TrackData).length > 0;
-        const hasFft = asItems(flight.FftData).length > 0;
-        if (!hasBalance && !hasTrack && !hasFft) {
-          log.push(`${tail}: removed empty flight ${text(flight.FlightNumber, "—")}.`);
+        if (isEmptyField(flight.BalanceData) && isEmptyField(flight.TrackData)) {
+          log.push(`${tail}: removed empty flight ${text(flight.FlightNumber, "—")} (no BalanceData/TrackData).`);
           return false;
         }
         return true;
       });
       test.Flights = kept;
-      if (kept.length) recomputeTestRange(test);
+      // If the first flight was removed, the test starts when the new first flight
+      // starts; if the last flight was removed, it ends when the new last flight ends.
+      // The flight's date text is copied exactly as written. Removing only middle
+      // flights (or every flight) leaves the test's dates unchanged.
+      if (kept.length && flights.length) {
+        if (kept[0] !== flights[0]) test.Started = asRecord(kept[0]).Started;
+        if (kept[kept.length - 1] !== flights[flights.length - 1]) {
+          test.Ended = asRecord(kept[kept.length - 1]).Ended;
+        }
+      }
     }
   }
 
@@ -1342,7 +1487,7 @@ async function writeDataset(
       const paths = groupFiles.get(record.group) ?? [];
       const aircraftGroup = (
         await Promise.all(paths.map((path) => import("node:fs/promises").then((fs) => fs.readFile(path, "utf8"))))
-      ).map((source) => JSON.parse(source) as RecordValue);
+      ).map((source) => parsePreservingNumbers(source) as RecordValue);
       if (aircraftGroup.length) {
         const keeper = aircraftGroup.find((item) => {
           const tail = text(item.TailNumber);
@@ -1366,8 +1511,7 @@ export async function previewCleanup(
   options: CleanupOptions,
 ): Promise<RecordValue | null> {
   const session = sessions.get(id);
-  if (!session || session.expiresAt <= Date.now()) return null;
-  touch(session);
+  if (!session) return null;
   const previewPath = join(session.directory, "preview.json");
   const metadata = await collectMetadata(session.rawPath);
   const records: OutputRecord[] = [];
@@ -1393,8 +1537,10 @@ export async function previewCleanup(
       operations.push(`Removed non-aircraft entry ${tail}.`);
       continue;
     }
+    // `source` is freshly parsed for this pass, so it is edited directly
+    // (structuredClone would turn RawNumber values into plain objects).
     const aircraft = applyIntraAircraftRules(
-      structuredClone(source),
+      source,
       options,
       operations,
       separatedTests,
@@ -1448,15 +1594,15 @@ export async function previewCleanup(
   session.options = options;
   session.separatedTests = separatedTests;
   session.log.push(`Cleanup preview ready: ${operations.length} proposed actions, ${warnings.length} manual-review warning(s).`);
-  session.log.push("All FFT capture and sample values were retained unchanged; only JSON formatting may differ.");
+  session.log.push("All FFT capture and sample values were retained unchanged; every number keeps its exact original text.");
+  await saveSession(session);
   return preview;
 }
 
 export async function applyCleanup(id: string): Promise<RecordValue | null> {
   const session = sessions.get(id);
-  if (!session || session.expiresAt <= Date.now()) return null;
+  if (!session) return null;
   if (!session.previewPath || !session.preview) throw new Error("Create a cleanup preview before applying it.");
-  touch(session);
   session.cleanedPath = session.previewPath;
   session.counts = session.preview.after as Counts;
   const scanned = await scanDataset(session.cleanedPath);
@@ -1464,14 +1610,14 @@ export async function applyCleanup(id: string): Promise<RecordValue | null> {
   session.analytics = scanned.analytics;
   session.fftAudit = scanned.fftAudit;
   session.log.push("Approved cleanup preview applied; source file remains unchanged.");
+  await saveSession(session);
   return sessionResponse(session);
 }
 
 export function getDownload(id: string): { path: string; filename: string; bytes: number } | null {
   const session = sessions.get(id);
-  if (!session || session.expiresAt <= Date.now()) return null;
+  if (!session) return null;
   if (!session.cleanedPath) return null;
-  touch(session);
   return {
     path: session.cleanedPath,
     filename: session.filename.replace(/\.json$/i, "") + "_CLEANED.json",
@@ -1485,3 +1631,6 @@ export async function closeDataSession(id: string): Promise<boolean> {
   await removeSession(session);
   return true;
 }
+
+// Runs last, once every helper above (RawNumber, parsePreservingNumbers) exists.
+loadSavedSessions();

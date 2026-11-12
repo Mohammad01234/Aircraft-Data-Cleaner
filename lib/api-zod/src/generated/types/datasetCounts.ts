@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RotorFlightCount } from './rotorFlightCount';
 import type { RotorTestCount } from './rotorTestCount';
 
 export interface DatasetCounts {
@@ -19,4 +20,6 @@ export interface DatasetCounts {
   averageFlightsPerTest?: number;
   /** Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor. */
   testsPerRotor?: RotorTestCount[];
+  /** Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted. */
+  flightsPerRotor?: RotorFlightCount[];
 }

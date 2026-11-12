@@ -519,6 +519,7 @@ function Workbench() {
                   <div className="grid grid-cols-2 gap-px border-t border-[#e5e0d5] bg-[#e5e0d5] sm:grid-cols-4" data-testid="metrics-tests-per-rotor">
                     <CountCell label="Avg flights / test" value={counts?.averageFlightsPerTest ?? 0} decimals={2} />
                     {(counts?.testsPerRotor ?? []).map(({ rotor, tests }) => <CountCell key={rotor} label={`Tests · ${rotor}`} value={tests} />)}
+                    {(counts?.flightsPerRotor ?? []).map(({ rotor, flights }) => <CountCell key={`flights-${rotor}`} label={`Flights · ${rotor}`} value={flights} />)}
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 sm:px-6">
                     <div className="flex items-center gap-2 text-[10px] text-[#697775]"><Clock3 size={13} className="text-[#a77a31]" /> Session <strong className="font-mono text-[#344b4d]">active until closed</strong></div>

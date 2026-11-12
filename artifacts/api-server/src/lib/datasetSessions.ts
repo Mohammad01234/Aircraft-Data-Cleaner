@@ -39,6 +39,9 @@ type Counts = {
   // Tests per rotor (Part); a test counts for a rotor only if one of its flights
   // has a BalanceData or TrackData entry for that rotor.
   testsPerRotor?: Array<{ rotor: string; tests: number }>;
+  // Flights per rotor (Part); a flight counts for a rotor only if it has a
+  // BalanceData or TrackData entry for that rotor. "Cabin" is not counted.
+  flightsPerRotor?: Array<{ rotor: string; flights: number }>;
 };
 type BalanceReading = {
   testCondition: string;
@@ -115,6 +118,8 @@ const SESSIONS_ROOT =
 const SESSION_FILE = "session.json";
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_FLIGHT_ROWS = 100_000;
+// Parts that are not rotors and are left out of the flights-per-rotor count.
+const NOT_A_ROTOR = new Set(["cabin"])
 const PAIRS: Array<[string, string]> = [
   ["84+39", "8439"],
   ["84+43", "8443"],
@@ -493,6 +498,7 @@ async function scanDataset(path: string): Promise<{
   };
 
   const testsPerRotor = new Map<string, number>();
+  const flightsPerRotor = new Map<string, number>();
 
   for await (const aircraft of aircraftItems(path)) {
     counts.aircraft += 1;
@@ -506,9 +512,19 @@ async function scanDataset(path: string): Promise<{
       const testRotors = new Set<string>();
       for (const flightValue of asItems(test.Flights)) {
         const flight = asRecord(flightValue);
+        const flightRotors = new Set<string>();
         for (const entry of [...asItems(flight.BalanceData), ...asItems(flight.TrackData)]) {
           const rotor = text(asRecord(entry).Part).trim();
-          if (rotor) testRotors.add(rotor);
+          if (rotor) {
+            testRotors.add(rotor);
+            flightRotors.add(rotor);
+          }
+        }
+        // Each flight counts at most once per rotor; Cabin is skipped.
+        for (const rotor of flightRotors) {
+          if (!NOT_A_ROTOR.has(rotor.toLowerCase())) {
+            flightsPerRotor.set(rotor, (flightsPerRotor.get(rotor) ?? 0) + 1);
+          }
         }
       }
       for (const rotor of testRotors) testsPerRotor.set(rotor, (testsPerRotor.get(rotor) ?? 0) + 1);
@@ -644,6 +660,9 @@ async function scanDataset(path: string): Promise<{
   counts.testsPerRotor = [...testsPerRotor.entries()]
     .map(([rotor, tests]) => ({ rotor, tests }))
     .sort((a, b) => a.rotor.localeCompare(b.rotor));
+  counts.flightsPerRotor = [...flightsPerRotor.entries()]
+    .map(([rotor, flights]) => ({ rotor, flights }))
+    .sort((a, b) => a.rotor.localeCompare(b.rotor));
 
   // A separate token pass counts FFT containers as captures, including captures
   // with no transducer samples. buildFftAudit already counts these per aircraft.
@@ -735,7 +754,7 @@ function loadSavedSessions(): void {
       if (!session.previewPath) delete session.preview;
       sessions.set(session.id, session);
       // Sessions saved before averageFlightsPerTest/testsPerRotor existed: rescan once.
-      if (session.counts.testsPerRotor == null) {
+      if (session.counts.testsPerRotor == null || session.counts.flightsPerRotor == null) {
         void scanDataset(session.cleanedPath ?? session.rawPath)
           .then((scanned) => {
             session.counts = scanned.counts;

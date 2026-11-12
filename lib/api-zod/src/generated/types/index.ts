@@ -25,4 +25,5 @@ export * from './flightReadingTrackDataItem';
 export * from './getDataSessionParams';
 export * from './getSessionFlightsParams';
 export * from './healthStatus';
+export * from './rotorFlightCount';
 export * from './rotorTestCount';

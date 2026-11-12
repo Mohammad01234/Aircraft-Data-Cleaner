@@ -249,12 +249,25 @@ components:
             one of its flights has a BalanceData or TrackData entry for that rotor.
           items:
             $ref: "#/components/schemas/RotorTestCount"
+        flightsPerRotor:
+          type: array
+          description: >-
+            Number of flights per rotor (Part). A flight counts for a rotor only if it has
+            at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.
+          items: 
+            $ref: "#/components/schemas/RotorFlightCount"
     RotorTestCount:
       type: object
       required: [rotor, tests]
       properties:
         rotor: { type: string }
         tests: { type: integer }
+    RotorFlightCount: 
+      type: object 
+      required: [rotor, flights]
+      properties:
+        rotor: { type: string }
+        flights: { type: integer }
     CleanupOptions:
       type: object
       required: [removeEmptyFlights, mergeByDays, mergeGapDays, splitByDays, splitGapDays, removeSmallAmplitude, removeWorseningQ, mergeKnownTailVariants, removeJunkAircraft, applyDateCorrections, removeTargetedTests, mergeEvidenceBasedChains]

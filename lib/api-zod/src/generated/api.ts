@@ -39,7 +39,11 @@ export const CreateDataSessionResponse = zod.object({
   "testsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "tests": zod.number().int()
-})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.')
+})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.'),
+  "flightsPerRotor": zod.array(zod.object({
+  "rotor": zod.string(),
+  "flights": zod.number().int()
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
 }),
   "log": zod.array(zod.string())
 })
@@ -71,7 +75,11 @@ export const GetDataSessionResponse = zod.object({
   "testsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "tests": zod.number().int()
-})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.')
+})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.'),
+  "flightsPerRotor": zod.array(zod.object({
+  "rotor": zod.string(),
+  "flights": zod.number().int()
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
 }),
   "log": zod.array(zod.string())
 })
@@ -138,7 +146,11 @@ export const GetSessionAnalyticsResponse = zod.object({
   "testsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "tests": zod.number().int()
-})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.')
+})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.'),
+  "flightsPerRotor": zod.array(zod.object({
+  "rotor": zod.string(),
+  "flights": zod.number().int()
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
 }),
   "byCondition": zod.array(zod.object({
   "name": zod.string(),
@@ -215,7 +227,11 @@ export const PreviewCleanupResponse = zod.object({
   "testsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "tests": zod.number().int()
-})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.')
+})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.'),
+  "flightsPerRotor": zod.array(zod.object({
+  "rotor": zod.string(),
+  "flights": zod.number().int()
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
 }),
   "after": zod.object({
   "aircraft": zod.number().int(),
@@ -229,7 +245,11 @@ export const PreviewCleanupResponse = zod.object({
   "testsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "tests": zod.number().int()
-})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.')
+})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.'),
+  "flightsPerRotor": zod.array(zod.object({
+  "rotor": zod.string(),
+  "flights": zod.number().int()
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
 }),
   "operations": zod.array(zod.string()),
   "warnings": zod.array(zod.string()),
@@ -263,7 +283,11 @@ export const ApplyCleanupResponse = zod.object({
   "testsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "tests": zod.number().int()
-})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.')
+})).optional().describe('Number of tests per rotor (Part). A test counts for a rotor only if at least one of its flights has a BalanceData or TrackData entry for that rotor.'),
+  "flightsPerRotor": zod.array(zod.object({
+  "rotor": zod.string(),
+  "flights": zod.number().int()
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
 }),
   "log": zod.array(zod.string())
 })

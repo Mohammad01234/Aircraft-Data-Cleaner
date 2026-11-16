@@ -43,7 +43,36 @@ export const CreateDataSessionResponse = zod.object({
   "flightsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "flights": zod.number().int()
-})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.'),
+  "rotorStats": zod.array(zod.object({
+  "rotor": zod.string(),
+  "tests": zod.number().int(),
+  "flights": zod.number().int(),
+  "avgFlightsPerTest": zod.number(),
+  "groundOnlyTests": zod.number().int(),
+  "groundOnlyFlights": zod.number().int(),
+  "avgGroundOnlyFlightsPerTest": zod.number(),
+  "otherConditionTests": zod.number().int(),
+  "otherConditionFlights": zod.number().int(),
+  "avgOtherConditionFlightsPerTest": zod.number(),
+  "limitsKnown": zod.boolean(),
+  "lastFlightWithinLimitsTests": zod.number().int(),
+  "anyFlightWithinLimitsTests": zod.number().int(),
+  "testsWithTwoGroundOnlyFlights": zod.number().int(),
+  "groundFirstLast": zod.array(zod.object({
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
+}))
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
 }),
   "log": zod.array(zod.string())
 })
@@ -79,7 +108,36 @@ export const GetDataSessionResponse = zod.object({
   "flightsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "flights": zod.number().int()
-})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.'),
+  "rotorStats": zod.array(zod.object({
+  "rotor": zod.string(),
+  "tests": zod.number().int(),
+  "flights": zod.number().int(),
+  "avgFlightsPerTest": zod.number(),
+  "groundOnlyTests": zod.number().int(),
+  "groundOnlyFlights": zod.number().int(),
+  "avgGroundOnlyFlightsPerTest": zod.number(),
+  "otherConditionTests": zod.number().int(),
+  "otherConditionFlights": zod.number().int(),
+  "avgOtherConditionFlightsPerTest": zod.number(),
+  "limitsKnown": zod.boolean(),
+  "lastFlightWithinLimitsTests": zod.number().int(),
+  "anyFlightWithinLimitsTests": zod.number().int(),
+  "testsWithTwoGroundOnlyFlights": zod.number().int(),
+  "groundFirstLast": zod.array(zod.object({
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
+}))
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
 }),
   "log": zod.array(zod.string())
 })
@@ -150,7 +208,36 @@ export const GetSessionAnalyticsResponse = zod.object({
   "flightsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "flights": zod.number().int()
-})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.'),
+  "rotorStats": zod.array(zod.object({
+  "rotor": zod.string(),
+  "tests": zod.number().int(),
+  "flights": zod.number().int(),
+  "avgFlightsPerTest": zod.number(),
+  "groundOnlyTests": zod.number().int(),
+  "groundOnlyFlights": zod.number().int(),
+  "avgGroundOnlyFlightsPerTest": zod.number(),
+  "otherConditionTests": zod.number().int(),
+  "otherConditionFlights": zod.number().int(),
+  "avgOtherConditionFlightsPerTest": zod.number(),
+  "limitsKnown": zod.boolean(),
+  "lastFlightWithinLimitsTests": zod.number().int(),
+  "anyFlightWithinLimitsTests": zod.number().int(),
+  "testsWithTwoGroundOnlyFlights": zod.number().int(),
+  "groundFirstLast": zod.array(zod.object({
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
+}))
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
 }),
   "byCondition": zod.array(zod.object({
   "name": zod.string(),
@@ -231,7 +318,36 @@ export const PreviewCleanupResponse = zod.object({
   "flightsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "flights": zod.number().int()
-})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.'),
+  "rotorStats": zod.array(zod.object({
+  "rotor": zod.string(),
+  "tests": zod.number().int(),
+  "flights": zod.number().int(),
+  "avgFlightsPerTest": zod.number(),
+  "groundOnlyTests": zod.number().int(),
+  "groundOnlyFlights": zod.number().int(),
+  "avgGroundOnlyFlightsPerTest": zod.number(),
+  "otherConditionTests": zod.number().int(),
+  "otherConditionFlights": zod.number().int(),
+  "avgOtherConditionFlightsPerTest": zod.number(),
+  "limitsKnown": zod.boolean(),
+  "lastFlightWithinLimitsTests": zod.number().int(),
+  "anyFlightWithinLimitsTests": zod.number().int(),
+  "testsWithTwoGroundOnlyFlights": zod.number().int(),
+  "groundFirstLast": zod.array(zod.object({
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
+}))
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
 }),
   "after": zod.object({
   "aircraft": zod.number().int(),
@@ -249,7 +365,36 @@ export const PreviewCleanupResponse = zod.object({
   "flightsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "flights": zod.number().int()
-})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.'),
+  "rotorStats": zod.array(zod.object({
+  "rotor": zod.string(),
+  "tests": zod.number().int(),
+  "flights": zod.number().int(),
+  "avgFlightsPerTest": zod.number(),
+  "groundOnlyTests": zod.number().int(),
+  "groundOnlyFlights": zod.number().int(),
+  "avgGroundOnlyFlightsPerTest": zod.number(),
+  "otherConditionTests": zod.number().int(),
+  "otherConditionFlights": zod.number().int(),
+  "avgOtherConditionFlightsPerTest": zod.number(),
+  "limitsKnown": zod.boolean(),
+  "lastFlightWithinLimitsTests": zod.number().int(),
+  "anyFlightWithinLimitsTests": zod.number().int(),
+  "testsWithTwoGroundOnlyFlights": zod.number().int(),
+  "groundFirstLast": zod.array(zod.object({
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
+}))
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
 }),
   "operations": zod.array(zod.string()),
   "warnings": zod.array(zod.string()),
@@ -287,7 +432,36 @@ export const ApplyCleanupResponse = zod.object({
   "flightsPerRotor": zod.array(zod.object({
   "rotor": zod.string(),
   "flights": zod.number().int()
-})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.')
+})).optional().describe('Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.'),
+  "rotorStats": zod.array(zod.object({
+  "rotor": zod.string(),
+  "tests": zod.number().int(),
+  "flights": zod.number().int(),
+  "avgFlightsPerTest": zod.number(),
+  "groundOnlyTests": zod.number().int(),
+  "groundOnlyFlights": zod.number().int(),
+  "avgGroundOnlyFlightsPerTest": zod.number(),
+  "otherConditionTests": zod.number().int(),
+  "otherConditionFlights": zod.number().int(),
+  "avgOtherConditionFlightsPerTest": zod.number(),
+  "limitsKnown": zod.boolean(),
+  "lastFlightWithinLimitsTests": zod.number().int(),
+  "anyFlightWithinLimitsTests": zod.number().int(),
+  "testsWithTwoGroundOnlyFlights": zod.number().int(),
+  "groundFirstLast": zod.array(zod.object({
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
+}))
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
 }),
   "log": zod.array(zod.string())
 })

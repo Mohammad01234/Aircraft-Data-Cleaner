@@ -19,6 +19,38 @@ export interface RotorFlightCount {
   flights: number;
 }
 
+export interface SummaryStat {
+  n: number;
+  /** @nullable */
+  mean: number | null;
+  /** @nullable */
+  sd: number | null;
+}
+
+export interface GroundMeasurementStats {
+  measurement: string;
+  first: SummaryStat;
+  last: SummaryStat;
+}
+
+export interface RotorStats {
+  rotor: string;
+  tests: number;
+  flights: number;
+  avgFlightsPerTest: number;
+  groundOnlyTests: number;
+  groundOnlyFlights: number;
+  avgGroundOnlyFlightsPerTest: number;
+  otherConditionTests: number;
+  otherConditionFlights: number;
+  avgOtherConditionFlightsPerTest: number;
+  limitsKnown: boolean;
+  lastFlightWithinLimitsTests: number;
+  anyFlightWithinLimitsTests: number;
+  testsWithTwoGroundOnlyFlights: number;
+  groundFirstLast: GroundMeasurementStats[];
+}
+
 export interface DatasetCounts {
   aircraft: number;
   tests: number;
@@ -33,6 +65,8 @@ export interface DatasetCounts {
   testsPerRotor?: RotorTestCount[];
   /** Number of flights per rotor (Part). A flight counts for a rotor only if it has at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted. */
   flightsPerRotor?: RotorFlightCount[];
+  /** Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu. */
+  rotorStats?: RotorStats[];
 }
 
 export interface DataSession {

@@ -254,20 +254,77 @@ components:
           description: >-
             Number of flights per rotor (Part). A flight counts for a rotor only if it has
             at least one BalanceData or TrackData entry for that rotor. "Cabin" is not counted.
-          items: 
+          items:
             $ref: "#/components/schemas/RotorFlightCount"
+        rotorStats:
+          type: array
+          description: >-
+            Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the
+            Rotor statistics menu.
+          items:
+            $ref: "#/components/schemas/RotorStats"
     RotorTestCount:
       type: object
       required: [rotor, tests]
       properties:
         rotor: { type: string }
         tests: { type: integer }
-    RotorFlightCount: 
-      type: object 
+    RotorFlightCount:
+      type: object
       required: [rotor, flights]
       properties:
         rotor: { type: string }
         flights: { type: integer }
+    SummaryStat:
+      type: object
+      required: [n, mean, sd]
+      properties:
+        n: { type: integer }
+        mean: { type: ["number", "null"] }
+        sd: { type: ["number", "null"] }
+    GroundMeasurementStats:
+      type: object
+      required: [measurement, first, last]
+      properties:
+        measurement: { type: string }
+        first: { $ref: "#/components/schemas/SummaryStat" }
+        last: { $ref: "#/components/schemas/SummaryStat" }
+    RotorStats:
+      type: object
+      required:
+        - rotor
+        - tests
+        - flights
+        - avgFlightsPerTest
+        - groundOnlyTests
+        - groundOnlyFlights
+        - avgGroundOnlyFlightsPerTest
+        - otherConditionTests
+        - otherConditionFlights
+        - avgOtherConditionFlightsPerTest
+        - limitsKnown
+        - lastFlightWithinLimitsTests
+        - anyFlightWithinLimitsTests
+        - testsWithTwoGroundOnlyFlights
+        - groundFirstLast
+      properties:
+        rotor: { type: string }
+        tests: { type: integer }
+        flights: { type: integer }
+        avgFlightsPerTest: { type: number }
+        groundOnlyTests: { type: integer }
+        groundOnlyFlights: { type: integer }
+        avgGroundOnlyFlightsPerTest: { type: number }
+        otherConditionTests: { type: integer }
+        otherConditionFlights: { type: integer }
+        avgOtherConditionFlightsPerTest: { type: number }
+        limitsKnown: { type: boolean }
+        lastFlightWithinLimitsTests: { type: integer }
+        anyFlightWithinLimitsTests: { type: integer }
+        testsWithTwoGroundOnlyFlights: { type: integer }
+        groundFirstLast:
+          type: array
+          items: { $ref: "#/components/schemas/GroundMeasurementStats" }
     CleanupOptions:
       type: object
       required: [removeEmptyFlights, mergeByDays, mergeGapDays, splitByDays, splitGapDays, removeSmallAmplitude, removeWorseningQ, mergeKnownTailVariants, removeJunkAircraft, applyDateCorrections, removeTargetedTests, mergeEvidenceBasedChains]

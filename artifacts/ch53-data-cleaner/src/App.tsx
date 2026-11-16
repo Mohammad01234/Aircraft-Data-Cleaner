@@ -15,6 +15,9 @@ import {
   type CleanupOptions, type CleanupPreview, type DataSession,
 } from '@workspace/api-client-react';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import {
+  Menubar, MenubarContent, MenubarMenu, MenubarRadioGroup, MenubarRadioItem, MenubarTrigger,
+} from '@/components/ui/menubar';
 const queryClient = new QueryClient();
 const countFields = [
   ['aircraft', 'Aircraft'], ['tests', 'Tests'], ['flights', 'Flights'],
@@ -535,6 +538,8 @@ function Workbench() {
                 </div>
               </section>
 
+              <RotorStatsPanel stats={counts?.rotorStats ?? []} />
+
               <section className="mt-5 overflow-hidden rounded-xl border border-[#d8d2c5] bg-[#fbfaf5]">
                 <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4 sm:px-6">
                   <div>
@@ -877,6 +882,163 @@ function HistogramCard({
       )}
     </div>
   );
+}
+
+type RotorStats = NonNullable<DataSession['counts']['rotorStats']>[number];
+type RotorStatKey = keyof Pick<RotorStats,
+  'avgFlightsPerTest' | 'groundOnlyTests' | 'groundOnlyFlights' | 'avgGroundOnlyFlightsPerTest' |
+  'otherConditionTests' | 'otherConditionFlights' | 'avgOtherConditionFlightsPerTest' |
+  'lastFlightWithinLimitsTests' | 'anyFlightWithinLimitsTests' | 'testsWithTwoGroundOnlyFlights'>;
+type RotorStatOption = {
+  id: RotorStatKey | 'groundFirstLast';
+  label: string;
+  description: string;
+  // For averages: numerator field, denominator field, and their unit words.
+  ratio?: [RotorStatKey | 'flights' | 'tests', RotorStatKey | 'flights' | 'tests', string, string];
+  needsLimits?: boolean;
+};
+
+const ROTOR_STAT_MENUS: Array<{ title: string; options: RotorStatOption[] }> = [
+  {
+    title: 'Overview',
+    options: [
+      { id: 'avgFlightsPerTest', label: 'AVG flights per test', description: 'Flights with balance or track data for the rotor divided by tests with balance or track data for the rotor.', ratio: ['flights', 'tests', 'flights', 'tests'] },
+    ],
+  },
+  {
+    title: 'Bodenlauf / Ground',
+    options: [
+      { id: 'groundOnlyTests', label: 'Tests with Bodenlauf/Ground-only flights', description: 'Tests with at least one flight whose track and balance data for the rotor is Bodenlauf/Ground only.' },
+      { id: 'groundOnlyFlights', label: 'Bodenlauf/Ground-only flights', description: 'Flights whose track and balance data for the rotor is Bodenlauf/Ground only.' },
+      { id: 'avgGroundOnlyFlightsPerTest', label: 'AVG Bodenlauf/Ground-only flights per test', description: 'Bodenlauf/Ground-only flights divided by tests with Bodenlauf/Ground-only flights.', ratio: ['groundOnlyFlights', 'groundOnlyTests', 'flights', 'tests'] },
+    ],
+  },
+  {
+    title: 'Other conditions',
+    options: [
+      { id: 'otherConditionTests', label: 'Tests with other conditions', description: 'Tests with at least one flight that has a condition other than Bodenlauf/Ground (track or balance) for the rotor.' },
+      { id: 'otherConditionFlights', label: 'Flights with other conditions', description: 'Flights with at least one condition other than Bodenlauf/Ground (track or balance) for the rotor.' },
+      { id: 'avgOtherConditionFlightsPerTest', label: 'AVG other-condition flights per test', description: 'Flights with other conditions divided by tests with other conditions.', ratio: ['otherConditionFlights', 'otherConditionTests', 'flights', 'tests'] },
+    ],
+  },
+  {
+    title: 'Limits',
+    options: [
+      { id: 'lastFlightWithinLimitsTests', label: 'Tests: last flight within limits', description: 'Tests where the last flight with data for the rotor has every test condition and all its track and balance values are within the Qa limits.', needsLimits: true },
+      { id: 'anyFlightWithinLimitsTests', label: 'Tests: any flight within limits', description: 'Tests where at least one flight has every test condition for the rotor and all its track and balance values are within the Qa limits.', needsLimits: true },
+    ],
+  },
+  {
+    title: 'Ground first vs last',
+    options: [
+      { id: 'testsWithTwoGroundOnlyFlights', label: 'Tests with ≥ 2 Bodenlauf/Ground-only flights', description: 'Tests with at least two Bodenlauf/Ground-only flights for the rotor.' },
+      { id: 'groundFirstLast', label: 'AVG & SD: first vs last Bodenlauf/Ground-only flight', description: 'Mean and standard deviation of the Bodenlauf/Ground balance amplitudes and track split (absolute values) of the first and last Bodenlauf/Ground-only flight in each test with at least two such flights.' },
+    ],
+  },
+];
+
+function RotorStatsPanel({ stats }: { stats: RotorStats[] }) {
+  const [selected, setSelected] = useState<RotorStatOption['id']>('avgFlightsPerTest');
+  const option = ROTOR_STAT_MENUS.flatMap((menu) => menu.options).find((item) => item.id === selected) ?? ROTOR_STAT_MENUS[0].options[0];
+  return (
+    <section className="mt-5 overflow-hidden rounded-xl border border-[#d8d2c5] bg-[#fbfaf5]" data-testid="panel-rotor-stats">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e0d5] px-5 py-4 sm:px-6">
+        <div>
+          <div className="text-[12px] font-bold text-[#344649]">Rotor statistics</div>
+          <div className="mt-1 text-[9px] text-[#858b85]">Pick a statistic from the menu bar · Cabin is not counted</div>
+        </div>
+        <Menubar className="h-auto flex-wrap border-[#d8d2c5] bg-[#f4f1e8] p-1" data-testid="menubar-rotor-stats">
+          {ROTOR_STAT_MENUS.map((menu) => {
+            const active = menu.options.some((item) => item.id === selected);
+            return (
+              <MenubarMenu key={menu.title}>
+                <MenubarTrigger
+                  className={`cursor-pointer px-2.5 py-1.5 text-[10px] font-bold ${active ? 'bg-[#1f5960] text-white focus:bg-[#1f5960] focus:text-white data-[state=open]:bg-[#1f5960] data-[state=open]:text-white' : 'text-[#344649]'}`}
+                  data-testid={`menu-rotor-${menu.title.toLowerCase().replace(/[^a-z]+/g, '-')}`}
+                >
+                  {menu.title}
+                </MenubarTrigger>
+                <MenubarContent className="min-w-[260px]">
+                  <MenubarRadioGroup value={selected} onValueChange={(value) => setSelected(value as RotorStatOption['id'])}>
+                    {menu.options.map((item) => (
+                      <MenubarRadioItem key={item.id} value={item.id} className="cursor-pointer text-[11px]" data-testid={`option-rotor-${item.id}`}>
+                        {item.label}
+                      </MenubarRadioItem>
+                    ))}
+                  </MenubarRadioGroup>
+                </MenubarContent>
+              </MenubarMenu>
+            );
+          })}
+        </Menubar>
+      </div>
+      <div className="px-5 py-4 sm:px-6">
+        <div className="text-[11px] font-bold text-[#2d4145]" data-testid="text-rotor-stat-title">{option.label}</div>
+        <div className="mt-1 max-w-3xl text-[9px] leading-relaxed text-[#77807e]">{option.description}</div>
+      </div>
+      {stats.length === 0 ? (
+        <div className="border-t border-[#e5e0d5] px-5 py-8 text-center text-[10px] text-[#858b85] sm:px-6">No rotor with balance or track data in this dataset.</div>
+      ) : option.id === 'groundFirstLast' ? (
+        <div className="overflow-x-auto border-t border-[#e5e0d5]">
+          <table className="w-full min-w-[560px] text-left text-[10px]">
+            <thead className="bg-[#f4f1e8] font-mono text-[8px] uppercase tracking-[.09em] text-[#858b83]">
+              <tr>
+                <th className="px-5 py-2.5 sm:px-6">Rotor</th>
+                <th className="px-3 py-2.5">Measurement</th>
+                <th className="px-3 py-2.5 text-right">First · AVG</th>
+                <th className="px-3 py-2.5 text-right">First · SD</th>
+                <th className="px-3 py-2.5 text-right">Last · AVG</th>
+                <th className="px-3 py-2.5 text-right">Last · SD</th>
+                <th className="px-5 py-2.5 text-right sm:px-6">Tests (n)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.flatMap((rotor) => rotor.groundFirstLast.length === 0
+                ? [<tr key={rotor.rotor} className="border-t border-[#ece8de]"><td className="px-5 py-2.5 font-bold text-[#2d4145] sm:px-6">{rotor.rotor}</td><td colSpan={6} className="px-3 py-2.5 text-[#858b85]">No test with at least 2 Bodenlauf/Ground-only flights</td></tr>]
+                : rotor.groundFirstLast.map((row, index) => (
+                  <tr key={`${rotor.rotor}-${row.measurement}`} className="border-t border-[#ece8de]">
+                    <td className="px-5 py-2.5 font-bold text-[#2d4145] sm:px-6">{index === 0 ? rotor.rotor : ''}</td>
+                    <td className="px-3 py-2.5 text-[#344649]">{row.measurement}</td>
+                    <td className="px-3 py-2.5 text-right font-mono">{formatStat(row.first.mean)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono">{formatStat(row.first.sd)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono">{formatStat(row.last.mean)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono">{formatStat(row.last.sd)}</td>
+                    <td className="px-5 py-2.5 text-right font-mono sm:px-6">{row.first.n === row.last.n ? row.first.n : `${row.first.n} / ${row.last.n}`}</td>
+                  </tr>
+                )))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-px border-t border-[#e5e0d5] bg-[#e5e0d5] sm:grid-cols-4">
+          {stats.map((rotor) => {
+            const value = rotor[option.id as RotorStatKey];
+            const unknownLimits = option.needsLimits && !rotor.limitsKnown;
+            return (
+              <div key={rotor.rotor} className="bg-[#f9f7f0] px-4 py-4 sm:px-5" data-testid={`rotor-stat-${rotor.rotor}`}>
+                <div className="font-mono text-[8px] uppercase tracking-[.09em] text-[#858b83]">{rotor.rotor}</div>
+                <div className="mt-1.5 text-[20px] font-extrabold tracking-[-.05em] text-[#2d4145]">
+                  {unknownLimits ? '—' : option.ratio ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : value.toLocaleString()}
+                </div>
+                {option.ratio && (
+                  <div className="mt-1 font-mono text-[8px] text-[#858b83]">
+                    {rotor[option.ratio[0]].toLocaleString()} {option.ratio[2]} / {rotor[option.ratio[1]].toLocaleString()} {option.ratio[3]}
+                  </div>
+                )}
+                {option.needsLimits && (
+                  <div className="mt-1 font-mono text-[8px] text-[#858b83]">{unknownLimits ? 'No limits defined for this rotor' : `of ${rotor.tests.toLocaleString()} tests`}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatStat(value: number | null) {
+  return value == null ? '—' : value.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
 
 function CountCell({ label, value, compact = false, decimals }: { label: string; value: number; compact?: boolean; decimals?: number }) {

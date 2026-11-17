@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { OtherConditionTotals } from './otherConditionTotals';
 import type { RotorFlightCount } from './rotorFlightCount';
 import type { RotorStats } from './rotorStats';
 import type { RotorTestCount } from './rotorTestCount';
@@ -25,4 +26,5 @@ export interface DatasetCounts {
   flightsPerRotor?: RotorFlightCount[];
   /** Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu. */
   rotorStats?: RotorStats[];
+  otherConditionTotals?: OtherConditionTotals;
 }

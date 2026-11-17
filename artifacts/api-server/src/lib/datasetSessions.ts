@@ -44,9 +44,13 @@ type Counts = {
   flightsPerRotor?: Array<{ rotor: string; flights: number }>;
   // Detailed per-rotor statistics shown in the "Rotor statistics" menu (Cabin excluded).
   rotorStats?: RotorStats[];
+  // All rotors together: tests with at least 2 flights that have data in a condition
+  // other than Bodenlauf/Ground, and the number of such flights in those tests.
+  otherConditionTotals?: OtherConditionTotals;
 };
 type SummaryStat = { n: number; mean: number | null; sd: number | null };
 type GroundMeasurementStats = { measurement: string; first: SummaryStat; last: SummaryStat };
+type ConditionMeasurementStats = GroundMeasurementStats & { condition: string };
 type RotorStats = {
   rotor: string;
   tests: number;
@@ -63,6 +67,8 @@ type RotorStats = {
   anyFlightWithinLimitsTests: number;
   testsWithTwoGroundOnlyFlights: number;
   groundFirstLast: GroundMeasurementStats[];
+  testsWithTwoOtherConditionFlights: number;
+  otherFirstLast: ConditionMeasurementStats[];
 };
 type BalanceReading = {
   testCondition: string;
@@ -521,6 +527,8 @@ async function scanDataset(path: string): Promise<{
   const testsPerRotor = new Map<string, number>();
   const flightsPerRotor = new Map<string, number>();
   const rotorStats = new Map<string, RotorAccumulator>();
+  const otherConditionTotals: OtherConditionTotals = { testsWithTwoOtherConditionFlights: 0, otherConditionFlightsInThoseTests: 0 };
+  let lastQaConfig: QaConfig | null = null;
   // Aircraft type and track units select the Qa limits used by the rotor statistics.
   const metadata = await collectMetadata(path).catch((): RecordValue => ({}));
 
@@ -533,10 +541,12 @@ async function scanDataset(path: string): Promise<{
       metadata.TrackUnits ?? aircraft.TrackUnits,
       asItems(aircraft.Tests).map(asRecord),
     );
+    // Only used to order conditions in the statistics tables.
+    if (!lastQaConfig || (qaConfig.family !== "GENERIC" && lastQaConfig.family === "GENERIC")) lastQaConfig = qaConfig;
     for (const testValue of asItems(aircraft.Tests)) {
       const test = asRecord(testValue);
       counts.tests += 1;
-      addTestToRotorStats(test, qaConfig, rotorStats);
+      addTestToRotorStats(test, qaConfig, rotorStats, otherConditionTotals);
 
       // Rotors (Parts) with at least one BalanceData or TrackData entry in this test.
       const testRotors = new Set<string>();
@@ -693,7 +703,8 @@ async function scanDataset(path: string): Promise<{
   counts.flightsPerRotor = [...flightsPerRotor.entries()]
     .map(([rotor, flights]) => ({ rotor, flights }))
     .sort((a, b) => a.rotor.localeCompare(b.rotor));
-  counts.rotorStats = finishRotorStats(rotorStats);
+  counts.rotorStats = finishRotorStats(rotorStats, lastQaConfig);
+  counts.otherConditionTotals = otherConditionTotals;
 
   // A separate token pass counts FFT containers as captures, including captures
   // with no transducer samples. buildFftAudit already counts these per aircraft.
@@ -765,9 +776,9 @@ function loadSavedSessions(): void {
     if (!entry.isDirectory()) continue;
     const directory = join(SESSIONS_ROOT, entry.name);
     try {
-      const stored = parsePreservingNumbers(
-        readFileSync(join(directory, SESSION_FILE), "utf8"),
-      ) as Session;
+      // session.json is the app's own summary (counts, previews): plain numbers are
+      // correct here. Exact number text only matters in the aircraft data files.
+      const stored = JSON.parse(readFileSync(join(directory, SESSION_FILE), "utf8")) as Session;
       const rawPath = join(directory, basename(stored.rawPath));
       if (!existsSync(rawPath)) throw new Error("source file missing");
       const fileIn = (name?: string) => {
@@ -785,7 +796,7 @@ function loadSavedSessions(): void {
       if (!session.previewPath) delete session.preview;
       sessions.set(session.id, session);
       // Sessions saved before averageFlightsPerTest/testsPerRotor existed: rescan once.
-      if (session.counts.testsPerRotor == null || session.counts.flightsPerRotor == null || session.counts.rotorStats == null) {
+      if (session.counts.testsPerRotor == null || session.counts.flightsPerRotor == null || session.counts.rotorStats == null || session.counts.otherConditionTotals == null) {
         void scanDataset(session.cleanedPath ?? session.rawPath)
           .then((scanned) => {
             session.counts = scanned.counts;
@@ -1343,10 +1354,15 @@ function computeFlightRotorQa(flight: RecordValue, cfg: QaConfig, flightDay: num
 type RotorFlightData = {
   hasGround: boolean;
   hasOther: boolean;
-  // `${conditionKey}|${axisKey}` -> |Amplitude|, plus the axis name as written.
-  balance: Map<string, { axis: string; value: number }>;
-  // conditionKey -> |TrackSplit|
-  track: Map<string, number>;
+  // `${conditionKey}|${axisKey}` -> |Amplitude|, with the condition and axis as written.
+  balance: Map<string, { condition: string; axis: string; value: number }>;
+  // conditionKey -> |TrackSplit|, with the condition as written.
+  track: Map<string, { condition: string; value: number }>;
+};
+
+type FirstLastAccumulator = {
+  // key -> label parts and the values of the first / last qualifying flight per test.
+  rows: Map<string, { condition: string; measurement: string; first: number[]; last: number[] }>;
 };
 
 type RotorAccumulator = {
@@ -1361,13 +1377,22 @@ type RotorAccumulator = {
   lastFlightWithinLimitsTests: number;
   anyFlightWithinLimitsTests: number;
   testsWithTwoGroundOnlyFlights: number;
-  first: Map<string, number[]>;
-  last: Map<string, number[]>;
+  testsWithTwoOtherConditionFlights: number;
+  ground: FirstLastAccumulator;
+  other: FirstLastAccumulator;
 };
 
+// Dataset-wide (all rotors together) other-condition totals.
+type OtherConditionTotals = {
+  testsWithTwoOtherConditionFlights: number;
+  otherConditionFlightsInThoseTests: number;
+};
+
+// Bodenlauf (CH-53), Ground (H145) and Parallel are all the ground condition.
+const GROUND_CONDITION_KEYS = new Set(["bodenlauf", "ground", "parallel"]);
+
 function isGroundCondition(cfg: QaConfig, condition: unknown): boolean {
-  const key = qaConditionKey(cfg, condition);
-  return key === "bodenlauf" || key === "ground";
+  return GROUND_CONDITION_KEYS.has(normKey(condition)) || GROUND_CONDITION_KEYS.has(qaConditionKey(cfg, condition));
 }
 
 // Collects, per rotor, what one flight contains for that rotor.
@@ -1394,7 +1419,11 @@ function rotorDataForFlight(flight: RecordValue, cfg: QaConfig): Map<string, Rot
     const value = numberOrNull(entry.Amplitude);
     if (value != null) {
       const axis = text(entry.Axis, "Unknown");
-      data.balance.set(`${qaConditionKey(cfg, entry.TestCondition)}|${normKey(axis)}`, { axis, value: Math.abs(value) });
+      data.balance.set(`${qaConditionKey(cfg, entry.TestCondition)}|${normKey(axis)}`, {
+        condition: text(entry.TestCondition, "Unknown"),
+        axis,
+        value: Math.abs(value),
+      });
     }
   }
   for (const entry of asItems(flight.TrackData).map(asRecord)) {
@@ -1402,7 +1431,12 @@ function rotorDataForFlight(flight: RecordValue, cfg: QaConfig): Map<string, Rot
     if (!data) continue;
     markCondition(data, entry.TestCondition);
     const value = numberOrNull(entry.TrackSplit);
-    if (value != null) data.track.set(qaConditionKey(cfg, entry.TestCondition), Math.abs(value));
+    if (value != null) {
+      data.track.set(qaConditionKey(cfg, entry.TestCondition), {
+        condition: text(entry.TestCondition, "Unknown"),
+        value: Math.abs(value),
+      });
+    }
   }
   return result;
 }
@@ -1421,53 +1455,95 @@ function rotorWithinLimits(rotor: string, data: RotorFlightData, cfg: QaConfig, 
       if (!reading || reading.value > qaBalanceLimit(cfg, rotor, axis, cond, flightDay)) return false;
     }
     if (needsTrack) {
-      const value = data.track.get(key);
-      if (value == null || value > cfg.trackLimit) return false;
+      const reading = data.track.get(key);
+      if (!reading || reading.value > cfg.trackLimit) return false;
     }
   }
   return true;
 }
 
-// Ground-condition values of one rotor in one flight, labelled for the first/last statistics.
-function groundMeasurements(data: RotorFlightData, cfg: QaConfig): Map<string, number> {
-  const values = new Map<string, number>();
-  for (const [key, reading] of data.balance) {
-    const condition = key.slice(0, key.indexOf("|"));
-    if (isGroundCondition(cfg, condition)) values.set(`Balance ${reading.axis}`, reading.value);
+// Balance and track values of one rotor in one flight, for either the ground
+// condition only or every condition other than ground. Ground values are pooled
+// under one "Bodenlauf/Ground" label; other conditions keep their own name.
+function conditionMeasurements(
+  data: RotorFlightData,
+  cfg: QaConfig,
+  ground: boolean,
+): Array<{ key: string; condition: string; measurement: string; value: number }> {
+  const values: Array<{ key: string; condition: string; measurement: string; value: number }> = [];
+  const conditionLabel = (condition: string) => (ground ? "Bodenlauf/Ground" : condition);
+  const conditionKey = (condition: string) => (ground ? "ground" : qaConditionKey(cfg, condition));
+  for (const reading of data.balance.values()) {
+    if (isGroundCondition(cfg, reading.condition) !== ground) continue;
+    const measurement = `Balance ${reading.axis}`;
+    values.push({ key: `${conditionKey(reading.condition)}|${normKey(measurement)}`, condition: conditionLabel(reading.condition), measurement, value: reading.value });
   }
-  for (const [condition, value] of data.track) {
-    if (isGroundCondition(cfg, condition)) values.set("Track split", value);
+  for (const reading of data.track.values()) {
+    if (isGroundCondition(cfg, reading.condition) !== ground) continue;
+    values.push({ key: `${conditionKey(reading.condition)}|tracksplit`, condition: conditionLabel(reading.condition), measurement: "Track split", value: reading.value });
   }
   return values;
+}
+
+// Adds the first and the last qualifying flight of one test to the accumulator.
+function addFirstLast(target: FirstLastAccumulator, flights: RotorFlightData[], cfg: QaConfig, ground: boolean): void {
+  const add = (data: RotorFlightData, which: "first" | "last") => {
+    const seen = new Set<string>();
+    for (const item of conditionMeasurements(data, cfg, ground)) {
+      // One value per measurement per flight (the first one found).
+      if (seen.has(item.key)) continue;
+      seen.add(item.key);
+      let row = target.rows.get(item.key);
+      if (!row) {
+        row = { condition: item.condition, measurement: item.measurement, first: [], last: [] };
+        target.rows.set(item.key, row);
+      }
+      row[which].push(item.value);
+    }
+  };
+  add(flights[0], "first");
+  add(flights[flights.length - 1], "last");
 }
 
 function addTestToRotorStats(
   test: RecordValue,
   cfg: QaConfig,
   stats: Map<string, RotorAccumulator>,
+  totals: OtherConditionTotals,
 ): void {
   type PerTest = {
     flights: number;
     groundOnly: RotorFlightData[];
-    other: number;
+    other: RotorFlightData[];
     lastWithData: { data: RotorFlightData; day: number } | null;
     anyWithin: boolean;
   };
   const perTest = new Map<string, PerTest>();
+  // Flights of this test with data in a condition other than ground, for any rotor.
+  let otherConditionFlights = 0;
   for (const flight of asItems(test.Flights).map(asRecord)) {
     const day = dayNumber(flight.Started);
+    let flightHasOther = false;
     for (const [rotor, data] of rotorDataForFlight(flight, cfg)) {
       let item = perTest.get(rotor);
       if (!item) {
-        item = { flights: 0, groundOnly: [], other: 0, lastWithData: null, anyWithin: false };
+        item = { flights: 0, groundOnly: [], other: [], lastWithData: null, anyWithin: false };
         perTest.set(rotor, item);
       }
       item.flights += 1;
       if (data.hasGround && !data.hasOther) item.groundOnly.push(data);
-      if (data.hasOther) item.other += 1;
+      if (data.hasOther) {
+        item.other.push(data);
+        flightHasOther = true;
+      }
       item.lastWithData = { data, day };
       if (rotorWithinLimits(rotor, data, cfg, day) === true) item.anyWithin = true;
     }
+    if (flightHasOther) otherConditionFlights += 1;
+  }
+  if (otherConditionFlights >= 2) {
+    totals.testsWithTwoOtherConditionFlights += 1;
+    totals.otherConditionFlightsInThoseTests += otherConditionFlights;
   }
   for (const [rotor, item] of perTest) {
     let acc = stats.get(rotor);
@@ -1484,8 +1560,9 @@ function addTestToRotorStats(
         lastFlightWithinLimitsTests: 0,
         anyFlightWithinLimitsTests: 0,
         testsWithTwoGroundOnlyFlights: 0,
-        first: new Map(),
-        last: new Map(),
+        testsWithTwoOtherConditionFlights: 0,
+        ground: { rows: new Map() },
+        other: { rows: new Map() },
       };
       stats.set(rotor, acc);
     }
@@ -1493,8 +1570,8 @@ function addTestToRotorStats(
     acc.flights += item.flights;
     acc.groundOnlyFlights += item.groundOnly.length;
     if (item.groundOnly.length) acc.groundOnlyTests += 1;
-    acc.otherConditionFlights += item.other;
-    if (item.other) acc.otherConditionTests += 1;
+    acc.otherConditionFlights += item.other.length;
+    if (item.other.length) acc.otherConditionTests += 1;
     if (item.lastWithData) {
       const lastOk = rotorWithinLimits(rotor, item.lastWithData.data, cfg, item.lastWithData.day);
       if (lastOk != null) acc.limitsKnown = true;
@@ -1503,15 +1580,11 @@ function addTestToRotorStats(
     if (item.anyWithin) acc.anyFlightWithinLimitsTests += 1;
     if (item.groundOnly.length >= 2) {
       acc.testsWithTwoGroundOnlyFlights += 1;
-      const push = (target: Map<string, number[]>, data: RotorFlightData) => {
-        for (const [label, value] of groundMeasurements(data, cfg)) {
-          const list = target.get(label) ?? [];
-          list.push(value);
-          target.set(label, list);
-        }
-      };
-      push(acc.first, item.groundOnly[0]);
-      push(acc.last, item.groundOnly[item.groundOnly.length - 1]);
+      addFirstLast(acc.ground, item.groundOnly, cfg, true);
+    }
+    if (item.other.length >= 2) {
+      acc.testsWithTwoOtherConditionFlights += 1;
+      addFirstLast(acc.other, item.other, cfg, false);
     }
   }
 }
@@ -1527,38 +1600,49 @@ function summarize(values: number[] | undefined): SummaryStat {
   return { n, mean, sd: Math.sqrt(variance) };
 }
 
-function finishRotorStats(stats: Map<string, RotorAccumulator>): RotorStats[] {
+function finishFirstLast(target: FirstLastAccumulator, cfg: QaConfig | null): ConditionMeasurementStats[] {
+  // Conditions in their usual test order (when known), then by name; balance before track.
+  const conditionRank = (condition: string) => {
+    const index = cfg ? cfg.conds.findIndex((cond) => qaConditionKey(cfg, cond) === qaConditionKey(cfg, condition)) : -1;
+    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  return [...target.rows.values()]
+    .sort((a, b) =>
+      conditionRank(a.condition) - conditionRank(b.condition) ||
+      a.condition.localeCompare(b.condition) ||
+      Number(a.measurement.startsWith("Track")) - Number(b.measurement.startsWith("Track")) ||
+      a.measurement.localeCompare(b.measurement))
+    .map((row) => ({
+      condition: row.condition,
+      measurement: row.measurement,
+      first: summarize(row.first),
+      last: summarize(row.last),
+    }));
+}
+
+function finishRotorStats(stats: Map<string, RotorAccumulator>, cfg: QaConfig | null): RotorStats[] {
   const ratio = (a: number, b: number) => (b > 0 ? a / b : 0);
   return [...stats.values()]
     .sort((a, b) => a.rotor.localeCompare(b.rotor))
-    .map((acc) => {
-      const labels = [...new Set([...acc.first.keys(), ...acc.last.keys()])].sort((a, b) => {
-        // Balance axes first, track split last.
-        const rank = (label: string) => (label.startsWith("Track") ? 1 : 0);
-        return rank(a) - rank(b) || a.localeCompare(b);
-      });
-      return {
-        rotor: acc.rotor,
-        tests: acc.tests,
-        flights: acc.flights,
-        avgFlightsPerTest: ratio(acc.flights, acc.tests),
-        groundOnlyTests: acc.groundOnlyTests,
-        groundOnlyFlights: acc.groundOnlyFlights,
-        avgGroundOnlyFlightsPerTest: ratio(acc.groundOnlyFlights, acc.groundOnlyTests),
-        otherConditionTests: acc.otherConditionTests,
-        otherConditionFlights: acc.otherConditionFlights,
-        avgOtherConditionFlightsPerTest: ratio(acc.otherConditionFlights, acc.otherConditionTests),
-        limitsKnown: acc.limitsKnown,
-        lastFlightWithinLimitsTests: acc.lastFlightWithinLimitsTests,
-        anyFlightWithinLimitsTests: acc.anyFlightWithinLimitsTests,
-        testsWithTwoGroundOnlyFlights: acc.testsWithTwoGroundOnlyFlights,
-        groundFirstLast: labels.map((measurement) => ({
-          measurement,
-          first: summarize(acc.first.get(measurement)),
-          last: summarize(acc.last.get(measurement)),
-        })),
-      };
-    });
+    .map((acc) => ({
+      rotor: acc.rotor,
+      tests: acc.tests,
+      flights: acc.flights,
+      avgFlightsPerTest: ratio(acc.flights, acc.tests),
+      groundOnlyTests: acc.groundOnlyTests,
+      groundOnlyFlights: acc.groundOnlyFlights,
+      avgGroundOnlyFlightsPerTest: ratio(acc.groundOnlyFlights, acc.groundOnlyTests),
+      otherConditionTests: acc.otherConditionTests,
+      otherConditionFlights: acc.otherConditionFlights,
+      avgOtherConditionFlightsPerTest: ratio(acc.otherConditionFlights, acc.otherConditionTests),
+      limitsKnown: acc.limitsKnown,
+      lastFlightWithinLimitsTests: acc.lastFlightWithinLimitsTests,
+      anyFlightWithinLimitsTests: acc.anyFlightWithinLimitsTests,
+      testsWithTwoGroundOnlyFlights: acc.testsWithTwoGroundOnlyFlights,
+      groundFirstLast: finishFirstLast(acc.ground, cfg).map(({ measurement, first, last }) => ({ measurement, first, last })),
+      testsWithTwoOtherConditionFlights: acc.testsWithTwoOtherConditionFlights,
+      otherFirstLast: finishFirstLast(acc.other, cfg),
+    }));
 }
 
 // Deletes an entire test when any rotor's Qa gets worse from one flight to the next flight

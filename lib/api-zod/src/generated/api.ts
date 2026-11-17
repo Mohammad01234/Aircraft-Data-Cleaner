@@ -71,8 +71,27 @@ export const CreateDataSessionResponse = zod.object({
   "mean": zod.number().nullable(),
   "sd": zod.number().nullable()
 })
+})),
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherFirstLast": zod.array(zod.object({
+  "condition": zod.string(),
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
 }))
-})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.'),
+  "otherConditionTotals": zod.object({
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherConditionFlightsInThoseTests": zod.number().int()
+}).optional().describe('All rotors together (Cabin excluded). Tests with at least 2 flights that have balance or track data in a condition other than Bodenlauf/Ground/Parallel, and the number of such flights inside those tests.')
 }),
   "log": zod.array(zod.string())
 })
@@ -136,8 +155,27 @@ export const GetDataSessionResponse = zod.object({
   "mean": zod.number().nullable(),
   "sd": zod.number().nullable()
 })
+})),
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherFirstLast": zod.array(zod.object({
+  "condition": zod.string(),
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
 }))
-})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.'),
+  "otherConditionTotals": zod.object({
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherConditionFlightsInThoseTests": zod.number().int()
+}).optional().describe('All rotors together (Cabin excluded). Tests with at least 2 flights that have balance or track data in a condition other than Bodenlauf/Ground/Parallel, and the number of such flights inside those tests.')
 }),
   "log": zod.array(zod.string())
 })
@@ -236,8 +274,27 @@ export const GetSessionAnalyticsResponse = zod.object({
   "mean": zod.number().nullable(),
   "sd": zod.number().nullable()
 })
+})),
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherFirstLast": zod.array(zod.object({
+  "condition": zod.string(),
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
 }))
-})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.'),
+  "otherConditionTotals": zod.object({
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherConditionFlightsInThoseTests": zod.number().int()
+}).optional().describe('All rotors together (Cabin excluded). Tests with at least 2 flights that have balance or track data in a condition other than Bodenlauf/Ground/Parallel, and the number of such flights inside those tests.')
 }),
   "byCondition": zod.array(zod.object({
   "name": zod.string(),
@@ -346,8 +403,27 @@ export const PreviewCleanupResponse = zod.object({
   "mean": zod.number().nullable(),
   "sd": zod.number().nullable()
 })
+})),
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherFirstLast": zod.array(zod.object({
+  "condition": zod.string(),
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
 }))
-})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.'),
+  "otherConditionTotals": zod.object({
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherConditionFlightsInThoseTests": zod.number().int()
+}).optional().describe('All rotors together (Cabin excluded). Tests with at least 2 flights that have balance or track data in a condition other than Bodenlauf/Ground/Parallel, and the number of such flights inside those tests.')
 }),
   "after": zod.object({
   "aircraft": zod.number().int(),
@@ -393,8 +469,27 @@ export const PreviewCleanupResponse = zod.object({
   "mean": zod.number().nullable(),
   "sd": zod.number().nullable()
 })
+})),
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherFirstLast": zod.array(zod.object({
+  "condition": zod.string(),
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
 }))
-})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.'),
+  "otherConditionTotals": zod.object({
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherConditionFlightsInThoseTests": zod.number().int()
+}).optional().describe('All rotors together (Cabin excluded). Tests with at least 2 flights that have balance or track data in a condition other than Bodenlauf/Ground/Parallel, and the number of such flights inside those tests.')
 }),
   "operations": zod.array(zod.string()),
   "warnings": zod.array(zod.string()),
@@ -460,8 +555,27 @@ export const ApplyCleanupResponse = zod.object({
   "mean": zod.number().nullable(),
   "sd": zod.number().nullable()
 })
+})),
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherFirstLast": zod.array(zod.object({
+  "condition": zod.string(),
+  "measurement": zod.string(),
+  "first": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+}),
+  "last": zod.object({
+  "n": zod.number().int(),
+  "mean": zod.number().nullable(),
+  "sd": zod.number().nullable()
+})
 }))
-})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.')
+})).optional().describe('Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu.'),
+  "otherConditionTotals": zod.object({
+  "testsWithTwoOtherConditionFlights": zod.number().int(),
+  "otherConditionFlightsInThoseTests": zod.number().int()
+}).optional().describe('All rotors together (Cabin excluded). Tests with at least 2 flights that have balance or track data in a condition other than Bodenlauf/Ground/Parallel, and the number of such flights inside those tests.')
 }),
   "log": zod.array(zod.string())
 })

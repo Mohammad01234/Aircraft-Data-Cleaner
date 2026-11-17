@@ -263,6 +263,8 @@ components:
             Rotor statistics menu.
           items:
             $ref: "#/components/schemas/RotorStats"
+        otherConditionTotals:
+          $ref: "#/components/schemas/OtherConditionTotals"
     RotorTestCount:
       type: object
       required: [rotor, tests]
@@ -289,6 +291,24 @@ components:
         measurement: { type: string }
         first: { $ref: "#/components/schemas/SummaryStat" }
         last: { $ref: "#/components/schemas/SummaryStat" }
+    ConditionMeasurementStats:
+      type: object
+      required: [condition, measurement, first, last]
+      properties:
+        condition: { type: string }
+        measurement: { type: string }
+        first: { $ref: "#/components/schemas/SummaryStat" }
+        last: { $ref: "#/components/schemas/SummaryStat" }
+    OtherConditionTotals:
+      type: object
+      description: >-
+        All rotors together (Cabin excluded). Tests with at least 2 flights that have
+        balance or track data in a condition other than Bodenlauf/Ground/Parallel, and
+        the number of such flights inside those tests.
+      required: [testsWithTwoOtherConditionFlights, otherConditionFlightsInThoseTests]
+      properties:
+        testsWithTwoOtherConditionFlights: { type: integer }
+        otherConditionFlightsInThoseTests: { type: integer }
     RotorStats:
       type: object
       required:
@@ -307,6 +327,8 @@ components:
         - anyFlightWithinLimitsTests
         - testsWithTwoGroundOnlyFlights
         - groundFirstLast
+        - testsWithTwoOtherConditionFlights
+        - otherFirstLast
       properties:
         rotor: { type: string }
         tests: { type: integer }
@@ -325,6 +347,10 @@ components:
         groundFirstLast:
           type: array
           items: { $ref: "#/components/schemas/GroundMeasurementStats" }
+        testsWithTwoOtherConditionFlights: { type: integer }
+        otherFirstLast:
+          type: array
+          items: { $ref: "#/components/schemas/ConditionMeasurementStats" }
     CleanupOptions:
       type: object
       required: [removeEmptyFlights, mergeByDays, mergeGapDays, splitByDays, splitGapDays, removeSmallAmplitude, removeWorseningQ, mergeKnownTailVariants, removeJunkAircraft, applyDateCorrections, removeTargetedTests, mergeEvidenceBasedChains]

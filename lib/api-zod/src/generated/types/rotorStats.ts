@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ConditionMeasurementStats } from './conditionMeasurementStats';
 import type { GroundMeasurementStats } from './groundMeasurementStats';
 
 export interface RotorStats {
@@ -23,4 +24,6 @@ export interface RotorStats {
   anyFlightWithinLimitsTests: number;
   testsWithTwoGroundOnlyFlights: number;
   groundFirstLast: GroundMeasurementStats[];
+  testsWithTwoOtherConditionFlights: number;
+  otherFirstLast: ConditionMeasurementStats[];
 }

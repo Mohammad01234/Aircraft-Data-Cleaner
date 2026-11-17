@@ -33,6 +33,13 @@ export interface GroundMeasurementStats {
   last: SummaryStat;
 }
 
+export interface ConditionMeasurementStats {
+  condition: string;
+  measurement: string;
+  first: SummaryStat;
+  last: SummaryStat;
+}
+
 export interface RotorStats {
   rotor: string;
   tests: number;
@@ -49,6 +56,16 @@ export interface RotorStats {
   anyFlightWithinLimitsTests: number;
   testsWithTwoGroundOnlyFlights: number;
   groundFirstLast: GroundMeasurementStats[];
+  testsWithTwoOtherConditionFlights: number;
+  otherFirstLast: ConditionMeasurementStats[];
+}
+
+/**
+ * All rotors together (Cabin excluded). Tests with at least 2 flights that have balance or track data in a condition other than Bodenlauf/Ground/Parallel, and the number of such flights inside those tests.
+ */
+export interface OtherConditionTotals {
+  testsWithTwoOtherConditionFlights: number;
+  otherConditionFlightsInThoseTests: number;
 }
 
 export interface DatasetCounts {
@@ -67,6 +84,7 @@ export interface DatasetCounts {
   flightsPerRotor?: RotorFlightCount[];
   /** Detailed per-rotor statistics (any aircraft type, "Cabin" excluded) for the Rotor statistics menu. */
   rotorStats?: RotorStats[];
+  otherConditionTotals?: OtherConditionTotals;
 }
 
 export interface DataSession {

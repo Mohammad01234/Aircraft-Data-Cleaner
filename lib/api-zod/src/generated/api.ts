@@ -308,7 +308,17 @@ export const GetSessionAnalyticsResponse = zod.object({
   "axis": zod.string(),
   "limit": zod.number(),
   "violations": zod.number().int()
-}))
+})),
+  "averageFlightsPerTest": zod.number().optional().describe('All flights divided by all tests (0 when there are no tests).'),
+  "histograms": zod.object({
+  "allFlightsPerTest": zod.array(zod.number().int()),
+  "hauptFlightsPerTest": zod.array(zod.number().int()),
+  "heckFlightsPerTest": zod.array(zod.number().int()),
+  "hauptBodenlaufPerTest": zod.array(zod.number().int()),
+  "hauptOtherConditionsPerTest": zod.array(zod.number().int()),
+  "heckBodenlaufPerTest": zod.array(zod.number().int()),
+  "heckOtherConditionsPerTest": zod.array(zod.number().int())
+}).optional().describe('One value per test (in file order) for each flight-distribution histogram. Main rotor = Haupt or Main (BalanceData or TrackData); tail rotor = Heck or Tail (BalanceData only). Ground-only = every condition of the flight is Bodenlauf/Ground/Parallel; other = at least one other condition.')
 })
 
 

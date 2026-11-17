@@ -453,6 +453,34 @@ components:
               axis: { type: string }
               limit: { type: number }
               violations: { type: integer }
+        averageFlightsPerTest:
+          type: number
+          description: All flights divided by all tests (0 when there are no tests).
+        histograms:
+          $ref: "#/components/schemas/FlightHistograms"
+    FlightHistograms:
+      type: object
+      description: >-
+        One value per test (in file order) for each flight-distribution histogram.
+        Main rotor = Haupt or Main (BalanceData or TrackData); tail rotor = Heck or Tail
+        (BalanceData only). Ground-only = every condition of the flight is
+        Bodenlauf/Ground/Parallel; other = at least one other condition.
+      required:
+        - allFlightsPerTest
+        - hauptFlightsPerTest
+        - heckFlightsPerTest
+        - hauptBodenlaufPerTest
+        - hauptOtherConditionsPerTest
+        - heckBodenlaufPerTest
+        - heckOtherConditionsPerTest
+      properties:
+        allFlightsPerTest: { type: array, items: { type: integer } }
+        hauptFlightsPerTest: { type: array, items: { type: integer } }
+        heckFlightsPerTest: { type: array, items: { type: integer } }
+        hauptBodenlaufPerTest: { type: array, items: { type: integer } }
+        hauptOtherConditionsPerTest: { type: array, items: { type: integer } }
+        heckBodenlaufPerTest: { type: array, items: { type: integer } }
+        heckOtherConditionsPerTest: { type: array, items: { type: integer } }
     FftAudit:
       type: object
       required: [captures, samples, findings, preserved]

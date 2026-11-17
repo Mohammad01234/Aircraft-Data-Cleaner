@@ -53,20 +53,17 @@ const initialOptions: CleanupOptions = {
 };
 
 type LocalEvent = { label: string; time: string; tone?: 'success' | 'warning' };
-type HistogramData = {
-  allFlightsPerTest: number[];
-  hauptFlightsPerTest: number[];
-  heckFlightsPerTest: number[];
-  hauptBodenlaufPerTest: number[];
-  hauptOtherConditionsPerTest: number[];
-  heckBodenlaufPerTest: number[];
-  heckOtherConditionsPerTest: number[];
-};
-
-type HistogramAnalytics = {
-  averageFlightsPerTest: number;
-  histograms: HistogramData;
-};
+// The seven flight-distribution histograms (same rules as the MATLAB script).
+// Haupt = main rotor (Haupt or Main), Heck = tail rotor (Heck or Tail).
+const HISTOGRAMS = [
+  { key: 'allFlightsPerTest', title: '1 · All flights per test', xLabel: 'Number of flights per test' },
+  { key: 'hauptFlightsPerTest', title: '2 · Haupt flights per test', xLabel: 'Number of Haupt flights per test' },
+  { key: 'heckFlightsPerTest', title: '3 · Heck flights per test', xLabel: 'Number of Heck flights per test' },
+  { key: 'hauptBodenlaufPerTest', title: '4 · Haupt · Bodenlauf/Ground/Parallel only', xLabel: 'Number of Haupt ground-only flights per test' },
+  { key: 'hauptOtherConditionsPerTest', title: '5 · Haupt · Other conditions', xLabel: 'Number of Haupt other-condition flights per test' },
+  { key: 'heckBodenlaufPerTest', title: '6 · Heck · Bodenlauf/Ground/Parallel only', xLabel: 'Number of Heck ground-only flights per test' },
+  { key: 'heckOtherConditionsPerTest', title: '7 · Heck · Other conditions', xLabel: 'Number of Heck other-condition flights per test' },
+] as const;
 const nowLabel = () => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date());
 const prettyBytes = (bytes: number) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const friendlyError = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed. Try again.';
@@ -370,9 +367,7 @@ function Workbench() {
   };
 
   const counts = session?.counts;
-  const analytics = analyticsQuery.data as (
-    NonNullable<typeof analyticsQuery.data> & HistogramAnalytics
-  ) | undefined;
+  const analytics = analyticsQuery.data;
   const flights = flightsQuery.data;
   const fft = fftQuery.data;
   const shownEvents = [...activity, ...(session?.log ?? []).map((label) => ({ label, time: 'API' }))].slice(0, 7);
@@ -579,39 +574,14 @@ function Workbench() {
                 {showHistos && (
                   <div className="grid gap-4 border-t border-[#e5e0d5] bg-[#f7f5ed] p-4 sm:grid-cols-2 xl:grid-cols-3">
                     {analytics?.histograms ? (
-                      <>
-                        <HistogramCard
-                          title="All flights per test"
-                          values={analytics.histograms.allFlightsPerTest}
-                        />
-                        <HistogramCard
-                          title="Haupt flights per test"
-                          values={analytics.histograms.hauptFlightsPerTest}
-                        />
-                        <HistogramCard
-                          title="Heck flights per test"
-                          values={analytics.histograms.heckFlightsPerTest}
-                        />
-                        <HistogramCard
-                          title="Haupt · Bodenlauf only"
-                          values={analytics.histograms.hauptBodenlaufPerTest}
-                        />
-                        <HistogramCard
-                          title="Haupt · Other conditions"
-                          values={analytics.histograms.hauptOtherConditionsPerTest}
-                        />
-                        <HistogramCard
-                          title="Heck · Bodenlauf only"
-                          values={analytics.histograms.heckBodenlaufPerTest}
-                        />
-                        <HistogramCard
-                          title="Heck · Other conditions"
-                          values={analytics.histograms.heckOtherConditionsPerTest}
-                        />
-                      </>
+                      HISTOGRAMS.map(({ key, title, xLabel }) => (
+                        <HistogramCard key={key} title={title} xLabel={xLabel} values={analytics.histograms?.[key] ?? []} />
+                      ))
                     ) : (
                       <p className="text-[10px] text-[#858b85]">
-                        Histogram data is not available yet. Check that the analytics API returns the histogram fields.
+                        {analyticsQuery.isLoading
+                          ? 'Loading histogram data…'
+                          : 'Histogram data is not calculated yet. Rebuild and restart the backend, then reload this page (a saved session is recounted once in the background).'}
                       </p>
                     )}
                   </div>
@@ -814,70 +784,59 @@ function Workbench() {
 
 function HistogramCard({
   title,
+  xLabel,
   values,
 }: {
   title: string;
+  xLabel: string;
   values: number[];
 }) {
-  const distribution = new Map<number, number>();
-
-  for (const value of values) {
-    distribution.set(value, (distribution.get(value) ?? 0) + 1);
-  }
-
-  const bins = [...distribution.entries()].sort((a, b) => a[0] - b[0]);
-  const maxFrequency = Math.max(1, ...bins.map(([, frequency]) => frequency));
+  const max = values.length ? Math.max(...values) : 0;
+  const counts = new Array<number>(max + 1).fill(0);
+  for (const value of values) counts[value] += 1;
+  const maxFrequency = Math.max(1, ...counts);
+  const mean = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  // Keep labels readable when there are many bins.
+  const labelStep = counts.length > 24 ? Math.ceil(counts.length / 12) : 1;
 
   return (
-    <div className="min-w-0 rounded-lg border border-[#e0dbcf] bg-[#fbfaf5] p-4">
-      <div className="text-[10px] font-bold text-[#344649]">
-        {title}
+    <div className="min-w-0 rounded-lg border border-[#e0dbcf] bg-[#fbfaf5] p-4" data-testid={`histogram-${title}`}>
+      <div className="text-[10px] font-bold text-[#344649]">{title}</div>
+      <div className="mt-1 font-mono text-[8px] text-[#858b85]">
+        {values.length.toLocaleString()} tests · max {max} · mean {mean.toFixed(2)}
       </div>
 
-      <div className="mt-1 text-[8px] text-[#858b85]">
-        Number of tests by flights per test
-      </div>
-
-      {bins.length === 0 ? (
-        <div className="py-8 text-center text-[9px] text-[#858b85]">
-          No data available
-        </div>
+      {values.length === 0 ? (
+        <div className="py-8 text-center text-[9px] text-[#858b85]">No data available</div>
       ) : (
         <>
-          <div className="mt-5 flex h-32 items-end gap-1 border-b border-l border-[#dcd7ca] px-2">
-            {bins.map(([flightCount, frequency]) => (
+          <div className="mt-5 flex h-32 items-end gap-px border-b border-l border-[#dcd7ca] px-1">
+            {counts.map((frequency, flightCount) => (
               <div
                 key={flightCount}
                 className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1"
                 title={`${flightCount} flights: ${frequency} test(s)`}
               >
-                <span className="font-mono text-[8px] text-[#687773]">
-                  {frequency}
-                </span>
+                {frequency > 0 && counts.length <= 24 && (
+                  <span className="font-mono text-[7px] text-[#687773]">{frequency}</span>
+                )}
                 <div
                   className="w-full max-w-8 rounded-t-sm bg-[#528477]"
-                  style={{
-                    height: `${Math.max(3, (frequency / maxFrequency) * 80)}px`,
-                  }}
+                  style={{ height: frequency > 0 ? `${Math.max(3, (frequency / maxFrequency) * 96)}px` : '0px' }}
                 />
               </div>
             ))}
           </div>
 
-          <div className="mt-2 flex gap-1 px-2">
-            {bins.map(([flightCount]) => (
-              <div
-                key={flightCount}
-                className="min-w-0 flex-1 text-center font-mono text-[8px] text-[#858b85]"
-              >
-                {flightCount}
+          <div className="mt-1.5 flex gap-px px-1">
+            {counts.map((_, flightCount) => (
+              <div key={flightCount} className="min-w-0 flex-1 text-center font-mono text-[7px] text-[#858b85]">
+                {flightCount % labelStep === 0 ? flightCount : ''}
               </div>
             ))}
           </div>
 
-          <div className="mt-3 text-[8px] text-[#858b85]">
-            X-axis: flights per test · Y-axis: number of tests
-          </div>
+          <div className="mt-3 text-[8px] text-[#858b85]">X: {xLabel} · Y: number of tests</div>
         </>
       )}
     </div>

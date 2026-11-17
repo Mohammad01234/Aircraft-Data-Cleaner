@@ -9,10 +9,14 @@ import type { AnalyticsByConditionItem } from './analyticsByConditionItem';
 import type { AnalyticsByPartItem } from './analyticsByPartItem';
 import type { AnalyticsComplianceItem } from './analyticsComplianceItem';
 import type { DatasetCounts } from './datasetCounts';
+import type { FlightHistograms } from './flightHistograms';
 
 export interface Analytics {
   counts: DatasetCounts;
   byCondition: AnalyticsByConditionItem[];
   byPart: AnalyticsByPartItem[];
   compliance: AnalyticsComplianceItem[];
+  /** All flights divided by all tests (0 when there are no tests). */
+  averageFlightsPerTest?: number;
+  histograms?: FlightHistograms;
 }

@@ -47,6 +47,8 @@ type Counts = {
   // All rotors together: tests with at least 2 flights that have data in a condition
   // other than Bodenlauf/Ground, and the number of such flights in those tests.
   otherConditionTotals?: OtherConditionTotals;
+  // Version of the statistics rules these counts were made with (see STATS_VERSION).
+  statsVersion?: number;
 };
 type SummaryStat = { n: number; mean: number | null; sd: number | null };
 type GroundMeasurementStats = { measurement: string; first: SummaryStat; last: SummaryStat };
@@ -147,6 +149,14 @@ const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_FLIGHT_ROWS = 100_000;
 // Parts that are not rotors and are left out of the flights-per-rotor count.
 const NOT_A_ROTOR = new Set(["cabin"]);
+// Bodenlauf (CH-53), Ground (H145) and Parallel are all the ground condition.
+const GROUND_CONDITION_KEYS = new Set(["bodenlauf", "ground", "parallel"]);
+// Rotor names used by the flight-distribution histograms (normalized with normKey).
+const HISTO_MAIN_ROTOR = new Set(["haupt", "main"]);
+const HISTO_TAIL_ROTOR = new Set(["heck", "tail"]);
+// Bump when a statistic's rules change: saved sessions with an older version are
+// recounted once when the server starts.
+const STATS_VERSION = 3;
 const PAIRS: Array<[string, string]> = [
   ["84+39", "8439"],
   ["84+43", "8443"],
@@ -624,53 +634,45 @@ async function scanDataset(path: string): Promise<{
         // Histogram counts: every flight counts, even without measurement data.
         allFlights += 1;
 
-        // Haupt is identified in either BalanceData or TrackData.
+        // Same rules as the flight-distribution MATLAB script, for any aircraft type:
+        // the main rotor is "Haupt" (CH-53) or "Main" (H145 etc.), the tail rotor is
+        // "Heck" or "Tail". The main rotor is found in BalanceData or TrackData, the
+        // tail rotor in BalanceData only.
         const hasHaupt =
-          balanceData.some((reading) => reading.part === "Haupt") ||
-          trackData.some((reading) => text(reading.Part) === "Haupt");
+          balanceData.some((reading) => HISTO_MAIN_ROTOR.has(normKey(reading.part))) ||
+          trackData.some((reading) => HISTO_MAIN_ROTOR.has(normKey(reading.Part)));
+        const hasHeck = balanceData.some((reading) => HISTO_TAIL_ROTOR.has(normKey(reading.part)));
 
-        // Heck is identified in BalanceData only.
-        const hasHeck = balanceData.some(
-          (reading) => reading.part === "Heck",
-        );
-
-        // Bodenlauf-only means exactly one unique condition: Bodenlauf.
+        // Ground-only belongs to the flight: every condition of the whole flight (all
+        // parts) is Bodenlauf/Ground/Parallel. A flight with any other condition is not
+        // ground-only for either rotor.
+        // Other condition belongs to the rotor: that rotor's own entries include a
+        // condition that is not Bodenlauf/Ground/Parallel (a missing condition counts as
+        // neither). Example: Main in Hover + Tail in Parallel counts as Haupt other,
+        // but neither as Heck ground-only nor as Heck other.
+        const isOtherCondition = (condition: unknown) => {
+          const name = text(condition, "Unknown");
+          return name !== "Unknown" && !GROUND_CONDITION_KEYS.has(normKey(name));
+        };
         const isBodenlaufOnly =
-          conditions.size === 1 && conditions.has("Bodenlauf");
-
-        // Other conditions can appear alongside other conditions.
-        const otherConditions = [
-          "Hovern OGE",
-          "90 Knoten",
-          "110 Knoten",
-          "130 Knoten",
-        ];
-        const hasOtherCondition = otherConditions.some((condition) =>
-          conditions.has(condition),
+          conditions.size > 0 && [...conditions].every((condition) => GROUND_CONDITION_KEYS.has(normKey(condition)));
+        const hauptHasOtherCondition =
+          balanceData.some((reading) => HISTO_MAIN_ROTOR.has(normKey(reading.part)) && isOtherCondition(reading.testCondition)) ||
+          trackData.some((reading) => HISTO_MAIN_ROTOR.has(normKey(reading.Part)) && isOtherCondition(reading.TestCondition));
+        const heckHasOtherCondition = balanceData.some(
+          (reading) => HISTO_TAIL_ROTOR.has(normKey(reading.part)) && isOtherCondition(reading.testCondition),
         );
 
         if (hasHaupt) {
           hauptFlights += 1;
-
-          if (isBodenlaufOnly) {
-            hauptBodenlauf += 1;
-          }
-
-          if (hasOtherCondition) {
-            hauptOtherConditions += 1;
-          }
+          if (isBodenlaufOnly) hauptBodenlauf += 1;
+          if (hauptHasOtherCondition) hauptOtherConditions += 1;
         }
 
         if (hasHeck) {
           heckFlights += 1;
-
-          if (isBodenlaufOnly) {
-            heckBodenlauf += 1;
-          }
-
-          if (hasOtherCondition) {
-            heckOtherConditions += 1;
-          }
+          if (isBodenlaufOnly) heckBodenlauf += 1;
+          if (heckHasOtherCondition) heckOtherConditions += 1;
         }
         if (flights.length < MAX_FLIGHT_ROWS) {
           flights.push({
@@ -705,6 +707,7 @@ async function scanDataset(path: string): Promise<{
     .sort((a, b) => a.rotor.localeCompare(b.rotor));
   counts.rotorStats = finishRotorStats(rotorStats, lastQaConfig);
   counts.otherConditionTotals = otherConditionTotals;
+  counts.statsVersion = STATS_VERSION;
 
   // A separate token pass counts FFT containers as captures, including captures
   // with no transducer samples. buildFftAudit already counts these per aircraft.
@@ -795,11 +798,12 @@ function loadSavedSessions(): void {
       };
       if (!session.previewPath) delete session.preview;
       sessions.set(session.id, session);
-      // Sessions saved before averageFlightsPerTest/testsPerRotor existed: rescan once.
-      if (session.counts.testsPerRotor == null || session.counts.flightsPerRotor == null || session.counts.rotorStats == null || session.counts.otherConditionTotals == null) {
+      // Sessions saved with older statistics rules: recount once (counts and histograms).
+      if (session.counts.statsVersion !== STATS_VERSION) {
         void scanDataset(session.cleanedPath ?? session.rawPath)
           .then((scanned) => {
             session.counts = scanned.counts;
+            session.analytics = scanned.analytics;
             return saveSession(session);
           })
           .catch(() => undefined);
@@ -1388,8 +1392,6 @@ type OtherConditionTotals = {
   otherConditionFlightsInThoseTests: number;
 };
 
-// Bodenlauf (CH-53), Ground (H145) and Parallel are all the ground condition.
-const GROUND_CONDITION_KEYS = new Set(["bodenlauf", "ground", "parallel"]);
 
 function isGroundCondition(cfg: QaConfig, condition: unknown): boolean {
   return GROUND_CONDITION_KEYS.has(normKey(condition)) || GROUND_CONDITION_KEYS.has(qaConditionKey(cfg, condition));

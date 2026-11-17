@@ -176,11 +176,27 @@ export type AnalyticsComplianceItem = {
   violations: number;
 };
 
+/**
+ * One value per test (in file order) for each flight-distribution histogram. Main rotor = Haupt or Main (BalanceData or TrackData); tail rotor = Heck or Tail (BalanceData only). Ground-only = every condition of the flight is Bodenlauf/Ground/Parallel; other = at least one other condition.
+ */
+export interface FlightHistograms {
+  allFlightsPerTest: number[];
+  hauptFlightsPerTest: number[];
+  heckFlightsPerTest: number[];
+  hauptBodenlaufPerTest: number[];
+  hauptOtherConditionsPerTest: number[];
+  heckBodenlaufPerTest: number[];
+  heckOtherConditionsPerTest: number[];
+}
+
 export interface Analytics {
   counts: DatasetCounts;
   byCondition: AnalyticsByConditionItem[];
   byPart: AnalyticsByPartItem[];
   compliance: AnalyticsComplianceItem[];
+  /** All flights divided by all tests (0 when there are no tests). */
+  averageFlightsPerTest?: number;
+  histograms?: FlightHistograms;
 }
 
 export type FftAuditFindingsItemSeverity = typeof FftAuditFindingsItemSeverity[keyof typeof FftAuditFindingsItemSeverity];

@@ -20,6 +20,7 @@ export * from './exportReady';
 export * from './fftAudit';
 export * from './fftAuditFindingsItem';
 export * from './fftAuditFindingsItemSeverity';
+export * from './flightHistograms';
 export * from './flightPage';
 export * from './flightReading';
 export * from './flightReadingTrackDataItem';

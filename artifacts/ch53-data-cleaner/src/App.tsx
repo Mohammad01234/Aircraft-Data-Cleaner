@@ -572,6 +572,7 @@ function Workbench() {
                 </div>
 
                 {showHistos && (
+                  <>
                   <div className="grid gap-4 border-t border-[#e5e0d5] bg-[#f7f5ed] p-4 sm:grid-cols-2 xl:grid-cols-3">
                     {analytics?.histograms ? (
                       HISTOGRAMS.map(({ key, title, xLabel }) => (
@@ -585,6 +586,8 @@ function Workbench() {
                       </p>
                     )}
                   </div>
+                  <FirstLastCharts stats={counts?.rotorStats ?? []} totals={counts?.otherConditionTotals} />
+                  </>
                 )}
               </section>
               <section className="animate-enter delay-2 mt-5 grid items-start gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(340px,.85fr)]">
@@ -844,6 +847,211 @@ function HistogramCard({
 }
 
 type RotorStats = NonNullable<DataSession['counts']['rotorStats']>[number];
+
+// First vs last other-condition flight charts (one per rotor and measurement):
+// bars = mean, whiskers = ±1 SD, n under each bar, red line = current Qa limit.
+const FIRST_COLOR = '#c27a2c';
+const LAST_COLOR = '#2a6fb8';
+const LIMIT_COLOR = '#c0392b';
+
+function niceStep(range: number, ticks: number) {
+  const raw = range / ticks;
+  const power = 10 ** Math.floor(Math.log10(raw));
+  const unit = raw / power;
+  return (unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 2.5 ? 2.5 : unit <= 5 ? 5 : 10) * power;
+}
+
+function FirstLastCharts({ stats, totals }: { stats: RotorStats[]; totals?: OtherConditionTotals }) {
+  const rotors = stats.filter((rotor) => (rotor.otherFirstLast ?? []).length > 0);
+  const [selected, setSelected] = useState<string | null>(null);
+  const rotor = rotors.find((item) => item.rotor === selected) ?? rotors[0];
+  const measurements = rotor ? [...new Set(rotor.otherFirstLast.map((row) => row.measurement))] : [];
+
+  return (
+    <div className="border-t border-[#e5e0d5] bg-[#f7f5ed] p-4" data-testid="first-last-charts">
+      <div className="rounded-lg border border-[#e0dbcf] bg-[#fbfaf5] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-xl">
+            <div className="text-[11px] font-bold text-[#344649]">8 · Other conditions · first vs last flight</div>
+            <div className="mt-1 text-[9px] leading-relaxed text-[#858b85]">
+              Tests with at least 2 flights that have data in a condition other than Bodenlauf/Ground/Parallel.
+              For each condition (including the Bodenlauf/Ground values of those flights), bars show the mean
+              of the first and the last such flight, whiskers ±1 SD, the number under a bar is n (tests), and
+              the red line is the current Qa limit.
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <div className="rounded-md bg-[#e8ece5] px-4 py-2.5">
+              <div className="font-mono text-[8px] uppercase tracking-[.1em] text-[#718079]">Tests ≥ 2 other-condition flights</div>
+              <div className="mt-1 text-[20px] font-extrabold tracking-[-.04em] text-[#2d4145]">
+                {totals ? totals.testsWithTwoOtherConditionFlights.toLocaleString() : '—'}
+              </div>
+            </div>
+            <div className="rounded-md bg-[#e8ece5] px-4 py-2.5">
+              <div className="font-mono text-[8px] uppercase tracking-[.1em] text-[#718079]">Other-condition flights in those tests</div>
+              <div className="mt-1 text-[20px] font-extrabold tracking-[-.04em] text-[#2d4145]">
+                {totals ? totals.otherConditionFlightsInThoseTests.toLocaleString() : '—'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {!rotor ? (
+          <p className="mt-4 text-[10px] text-[#858b85]">
+            No rotor has a test with at least 2 other-condition flights (or the backend has not calculated it yet).
+          </p>
+        ) : (
+          <>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {rotors.map((item) => (
+                <button
+                  key={item.rotor}
+                  type="button"
+                  onClick={() => setSelected(item.rotor)}
+                  className={`rounded-md px-3 py-1.5 text-[10px] font-bold transition ${
+                    item.rotor === rotor.rotor ? 'bg-[#1f5960] text-white' : 'bg-[#e8ece5] text-[#344649] hover:bg-[#dde3da]'
+                  }`}
+                  aria-pressed={item.rotor === rotor.rotor}
+                >
+                  {item.rotor}
+                </button>
+              ))}
+              <span className="ml-1 text-[9px] text-[#858b85]">
+                {rotor.testsWithTwoOtherConditionFlights.toLocaleString()} tests with ≥ 2 {rotor.rotor} other-condition flights
+              </span>
+              <div className="ml-auto flex flex-wrap items-center gap-3 text-[9px] text-[#4c5a56]">
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: FIRST_COLOR }} />First flight (test start)</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: LAST_COLOR }} />Last flight (test end)</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4" style={{ background: LIMIT_COLOR }} />Qa limit</span>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 xl:grid-cols-2">
+              {measurements.map((measurement) => (
+                <FirstLastChart
+                  key={`${rotor.rotor}-${measurement}`}
+                  title={`${rotor.rotor} · ${measurement}`}
+                  rows={rotor.otherFirstLast.filter((row) => row.measurement === measurement)}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FirstLastChart({ title, rows }: { title: string; rows: RotorStats['otherFirstLast'] }) {
+  const width = 640;
+  const height = 300;
+  const margin = { top: 14, right: 10, bottom: 52, left: 46 };
+  const plotW = width - margin.left - margin.right;
+  const plotH = height - margin.top - margin.bottom;
+  const top = (stat: { mean: number | null; sd: number | null }) => (stat.mean ?? 0) + (stat.sd ?? 0);
+  const rawMax = Math.max(0.0001, ...rows.flatMap((row) => [top(row.first), top(row.last), row.limit ?? 0]));
+  const step = niceStep(rawMax, 5);
+  const yMax = Math.ceil((rawMax * 1.05) / step) * step;
+  const ticks = Array.from({ length: Math.round(yMax / step) + 1 }, (_, index) => index * step);
+  const y = (value: number) => margin.top + plotH - (Math.max(0, value) / yMax) * plotH;
+  const groupW = plotW / Math.max(1, rows.length);
+  const barW = Math.min(44, groupW * 0.32);
+  const tickDigits = step < 0.1 ? 2 : step < 1 ? 1 : 0;
+
+  // Bar with a 4px rounded top, square at the baseline.
+  const barPath = (x: number, value: number) => {
+    const y0 = y(0);
+    const y1 = y(value);
+    const r = Math.max(0, Math.min(4, barW / 2, y0 - y1));
+    return `M${x},${y0} V${y1 + r} Q${x},${y1} ${x + r},${y1} H${x + barW - r} Q${x + barW},${y1} ${x + barW},${y1 + r} V${y0} Z`;
+  };
+
+  return (
+    <div className="min-w-0 rounded-lg border border-[#e0dbcf] bg-white p-3">
+      <div className="text-[10px] font-bold text-[#344649]">{title}</div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="mt-2 block h-auto w-full" role="img" aria-label={`${title}: mean ± SD of first and last flight per condition`}>
+        {ticks.map((tick) => (
+          <g key={tick}>
+            <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} stroke="#ece8de" strokeWidth={1} />
+            <text x={margin.left - 6} y={y(tick)} dy="0.32em" textAnchor="end" fontSize={10} fill="#858b85" fontFamily="ui-monospace, monospace">
+              {tick.toFixed(tickDigits)}
+            </text>
+          </g>
+        ))}
+        <line x1={margin.left} x2={width - margin.right} y1={y(0)} y2={y(0)} stroke="#b9b3a5" strokeWidth={1} />
+
+        {rows.map((row, index) => {
+          const center = margin.left + groupW * index + groupW / 2;
+          const bars = [
+            { stat: row.first, x: center - barW - 1, color: FIRST_COLOR, label: 'First flight' },
+            { stat: row.last, x: center + 1, color: LAST_COLOR, label: 'Last flight' },
+          ];
+          return (
+            <g key={row.condition}>
+              {bars.map(({ stat, x, color, label }) => (
+                <g key={label}>
+                  <title>{`${row.condition} · ${label}: mean ${formatStat(stat.mean)}, SD ${formatStat(stat.sd)}, n ${stat.n}`}</title>
+                  {/* Full-height transparent hit target for the tooltip. */}
+                  <rect x={x} y={margin.top} width={barW} height={plotH} fill="transparent" />
+                  {stat.mean != null && <path d={barPath(x, stat.mean)} fill={color} />}
+                  {stat.mean != null && stat.sd != null && (
+                    <g stroke="#2d3b3e" strokeWidth={1.25}>
+                      <line x1={x + barW / 2} x2={x + barW / 2} y1={y(stat.mean - stat.sd)} y2={y(stat.mean + stat.sd)} />
+                      <line x1={x + barW / 2 - 5} x2={x + barW / 2 + 5} y1={y(stat.mean + stat.sd)} y2={y(stat.mean + stat.sd)} />
+                      <line x1={x + barW / 2 - 5} x2={x + barW / 2 + 5} y1={y(stat.mean - stat.sd)} y2={y(stat.mean - stat.sd)} />
+                    </g>
+                  )}
+                  <text x={x + barW / 2} y={y(0) + 13} textAnchor="middle" fontSize={9} fill="#858b85" fontFamily="ui-monospace, monospace">
+                    {stat.n}
+                  </text>
+                </g>
+              ))}
+              {row.limit != null && (
+                <line
+                  x1={center - groupW * 0.42}
+                  x2={center + groupW * 0.42}
+                  y1={y(row.limit)}
+                  y2={y(row.limit)}
+                  stroke={LIMIT_COLOR}
+                  strokeWidth={2}
+                >
+                  <title>{`${row.condition} · Qa limit ${row.limit}`}</title>
+                </line>
+              )}
+              <text x={center} y={y(0) + 32} textAnchor="middle" fontSize={11} fill="#344649">
+                {row.condition}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <details className="mt-1 text-[9px] text-[#4c5a56]">
+        <summary className="cursor-pointer text-[#858b85]">Show values</summary>
+        <table className="mt-2 w-full border-collapse font-mono text-[9px]">
+          <thead>
+            <tr className="text-left text-[#858b85]">
+              <th className="py-1 pr-2 font-normal">Condition</th>
+              <th className="py-1 pr-2 font-normal">First mean ± SD (n)</th>
+              <th className="py-1 pr-2 font-normal">Last mean ± SD (n)</th>
+              <th className="py-1 font-normal">Limit</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.condition} className="border-t border-[#ece8de]">
+                <td className="py-1 pr-2 font-sans">{row.condition}</td>
+                <td className="py-1 pr-2">{formatStat(row.first.mean)} ± {formatStat(row.first.sd)} ({row.first.n})</td>
+                <td className="py-1 pr-2">{formatStat(row.last.mean)} ± {formatStat(row.last.sd)} ({row.last.n})</td>
+                <td className="py-1">{row.limit ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </div>
+  );
+}
+
 type OtherConditionTotals = NonNullable<DataSession['counts']['otherConditionTotals']>;
 type RotorStatKey = keyof Pick<RotorStats,
   'avgFlightsPerTest' | 'groundOnlyTests' | 'groundOnlyFlights' | 'avgGroundOnlyFlightsPerTest' |
@@ -902,7 +1110,7 @@ const ROTOR_STAT_MENUS: Array<{ title: string; options: RotorStatOption[] }> = [
   {
     title: 'Other first vs last',
     options: [
-      { id: 'otherFirstLast', kind: 'table', label: 'AVG & SD per condition: first vs last other-condition flight', description: 'For each rotor and each condition other than Bodenlauf/Ground/Parallel: mean and standard deviation of the balance amplitudes and track split (absolute values) of the first and last flight with at least one other condition for the rotor, in tests with at least two such flights. Tests (n) is how many tests had that value.' },
+      { id: 'otherFirstLast', kind: 'table', label: 'AVG & SD per condition: first vs last other-condition flight', description: 'For each rotor and each condition (Bodenlauf/Ground values of those flights first, then every other condition): mean and standard deviation of the balance amplitudes and track split (absolute values) of the first and last flight with at least one other condition for the rotor, in tests with at least two such flights. Tests (n) is how many tests had that value.' },
       { id: 'testsWithTwoOtherConditionFlights', kind: 'rotor', label: 'Tests with ≥ 2 other-condition flights (per rotor)', description: 'Per rotor: tests with at least two flights that have a condition other than Bodenlauf/Ground/Parallel for that rotor. These are the tests used in the first vs last table.' },
       { id: 'testsWithTwoOtherConditionFlights', kind: 'total', label: 'Tests with ≥ 2 other-condition flights (all rotors)', description: 'All rotors together: tests with at least two flights that have balance or track data in a condition other than Bodenlauf/Ground/Parallel.' },
       { id: 'otherConditionFlightsInThoseTests', kind: 'total', label: 'Other-condition flights in those tests (all rotors)', description: 'All rotors together: flights with at least one condition other than Bodenlauf/Ground/Parallel, inside the tests with at least two such flights.' },

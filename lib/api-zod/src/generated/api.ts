@@ -76,6 +76,7 @@ export const CreateDataSessionResponse = zod.object({
   "otherFirstLast": zod.array(zod.object({
   "condition": zod.string(),
   "measurement": zod.string(),
+  "limit": zod.number().nullish().describe('Current Qa limit for this rotor, condition and measurement (null when unknown).'),
   "first": zod.object({
   "n": zod.number().int(),
   "mean": zod.number().nullable(),
@@ -160,6 +161,7 @@ export const GetDataSessionResponse = zod.object({
   "otherFirstLast": zod.array(zod.object({
   "condition": zod.string(),
   "measurement": zod.string(),
+  "limit": zod.number().nullish().describe('Current Qa limit for this rotor, condition and measurement (null when unknown).'),
   "first": zod.object({
   "n": zod.number().int(),
   "mean": zod.number().nullable(),
@@ -279,6 +281,7 @@ export const GetSessionAnalyticsResponse = zod.object({
   "otherFirstLast": zod.array(zod.object({
   "condition": zod.string(),
   "measurement": zod.string(),
+  "limit": zod.number().nullish().describe('Current Qa limit for this rotor, condition and measurement (null when unknown).'),
   "first": zod.object({
   "n": zod.number().int(),
   "mean": zod.number().nullable(),
@@ -418,6 +421,7 @@ export const PreviewCleanupResponse = zod.object({
   "otherFirstLast": zod.array(zod.object({
   "condition": zod.string(),
   "measurement": zod.string(),
+  "limit": zod.number().nullish().describe('Current Qa limit for this rotor, condition and measurement (null when unknown).'),
   "first": zod.object({
   "n": zod.number().int(),
   "mean": zod.number().nullable(),
@@ -484,6 +488,7 @@ export const PreviewCleanupResponse = zod.object({
   "otherFirstLast": zod.array(zod.object({
   "condition": zod.string(),
   "measurement": zod.string(),
+  "limit": zod.number().nullish().describe('Current Qa limit for this rotor, condition and measurement (null when unknown).'),
   "first": zod.object({
   "n": zod.number().int(),
   "mean": zod.number().nullable(),
@@ -570,6 +575,7 @@ export const ApplyCleanupResponse = zod.object({
   "otherFirstLast": zod.array(zod.object({
   "condition": zod.string(),
   "measurement": zod.string(),
+  "limit": zod.number().nullish().describe('Current Qa limit for this rotor, condition and measurement (null when unknown).'),
   "first": zod.object({
   "n": zod.number().int(),
   "mean": zod.number().nullable(),

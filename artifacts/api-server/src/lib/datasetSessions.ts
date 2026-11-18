@@ -52,7 +52,8 @@ type Counts = {
 };
 type SummaryStat = { n: number; mean: number | null; sd: number | null };
 type GroundMeasurementStats = { measurement: string; first: SummaryStat; last: SummaryStat };
-type ConditionMeasurementStats = GroundMeasurementStats & { condition: string };
+// limit: the current Qa limit for this rotor, condition and measurement (null when unknown).
+type ConditionMeasurementStats = GroundMeasurementStats & { condition: string; limit: number | null };
 type RotorStats = {
   rotor: string;
   tests: number;
@@ -156,7 +157,7 @@ const HISTO_MAIN_ROTOR = new Set(["haupt", "main"]);
 const HISTO_TAIL_ROTOR = new Set(["heck", "tail"]);
 // Bump when a statistic's rules change: saved sessions with an older version are
 // recounted once when the server starts.
-const STATS_VERSION = 3;
+const STATS_VERSION = 5;
 const PAIRS: Array<[string, string]> = [
   ["84+39", "8439"],
   ["84+43", "8443"],
@@ -1464,6 +1465,8 @@ function rotorWithinLimits(rotor: string, data: RotorFlightData, cfg: QaConfig, 
   return true;
 }
 
+const GROUND_LABEL = "Bodenlauf/Ground";
+
 // Balance and track values of one rotor in one flight, for either the ground
 // condition only or every condition other than ground. Ground values are pooled
 // under one "Bodenlauf/Ground" label; other conditions keep their own name.
@@ -1473,7 +1476,7 @@ function conditionMeasurements(
   ground: boolean,
 ): Array<{ key: string; condition: string; measurement: string; value: number }> {
   const values: Array<{ key: string; condition: string; measurement: string; value: number }> = [];
-  const conditionLabel = (condition: string) => (ground ? "Bodenlauf/Ground" : condition);
+  const conditionLabel = (condition: string) => (ground ? GROUND_LABEL : condition);
   const conditionKey = (condition: string) => (ground ? "ground" : qaConditionKey(cfg, condition));
   for (const reading of data.balance.values()) {
     if (isGroundCondition(cfg, reading.condition) !== ground) continue;
@@ -1488,10 +1491,15 @@ function conditionMeasurements(
 }
 
 // Adds the first and the last qualifying flight of one test to the accumulator.
+// For other-condition flights, the Bodenlauf/Ground values of those same flights are
+// included too (pooled under one "Bodenlauf/Ground" row), next to each other condition.
 function addFirstLast(target: FirstLastAccumulator, flights: RotorFlightData[], cfg: QaConfig, ground: boolean): void {
   const add = (data: RotorFlightData, which: "first" | "last") => {
     const seen = new Set<string>();
-    for (const item of conditionMeasurements(data, cfg, ground)) {
+    const items = ground
+      ? conditionMeasurements(data, cfg, true)
+      : [...conditionMeasurements(data, cfg, true), ...conditionMeasurements(data, cfg, false)];
+    for (const item of items) {
       // One value per measurement per flight (the first one found).
       if (seen.has(item.key)) continue;
       seen.add(item.key);
@@ -1602,9 +1610,10 @@ function summarize(values: number[] | undefined): SummaryStat {
   return { n, mean, sd: Math.sqrt(variance) };
 }
 
-function finishFirstLast(target: FirstLastAccumulator, cfg: QaConfig | null): ConditionMeasurementStats[] {
+function finishFirstLast(target: FirstLastAccumulator, cfg: QaConfig | null, rotor: string): ConditionMeasurementStats[] {
   // Conditions in their usual test order (when known), then by name; balance before track.
   const conditionRank = (condition: string) => {
+    if (condition === GROUND_LABEL) return -1;
     const index = cfg ? cfg.conds.findIndex((cond) => qaConditionKey(cfg, cond) === qaConditionKey(cfg, condition)) : -1;
     return index < 0 ? Number.MAX_SAFE_INTEGER : index;
   };
@@ -1617,6 +1626,18 @@ function finishFirstLast(target: FirstLastAccumulator, cfg: QaConfig | null): Co
     .map((row) => ({
       condition: row.condition,
       measurement: row.measurement,
+      // Current limit (no flight date: the newest CH-53 lateral limit applies).
+      limit: !cfg
+        ? null
+        : row.measurement.startsWith("Balance ")
+          ? qaBalanceLimit(
+              cfg,
+              rotor,
+              row.measurement.slice("Balance ".length),
+              row.condition === GROUND_LABEL ? (cfg.family === "H145" ? "ground" : "bodenlauf") : qaConditionKey(cfg, row.condition),
+              Number.NaN,
+            )
+          : cfg.trackLimit,
       first: summarize(row.first),
       last: summarize(row.last),
     }));
@@ -1641,9 +1662,9 @@ function finishRotorStats(stats: Map<string, RotorAccumulator>, cfg: QaConfig | 
       lastFlightWithinLimitsTests: acc.lastFlightWithinLimitsTests,
       anyFlightWithinLimitsTests: acc.anyFlightWithinLimitsTests,
       testsWithTwoGroundOnlyFlights: acc.testsWithTwoGroundOnlyFlights,
-      groundFirstLast: finishFirstLast(acc.ground, cfg).map(({ measurement, first, last }) => ({ measurement, first, last })),
+      groundFirstLast: finishFirstLast(acc.ground, cfg, acc.rotor).map(({ measurement, first, last }) => ({ measurement, first, last })),
       testsWithTwoOtherConditionFlights: acc.testsWithTwoOtherConditionFlights,
-      otherFirstLast: finishFirstLast(acc.other, cfg),
+      otherFirstLast: finishFirstLast(acc.other, cfg, acc.rotor),
     }));
 }
 

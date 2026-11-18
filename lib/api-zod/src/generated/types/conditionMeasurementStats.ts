@@ -10,6 +10,11 @@ import type { SummaryStat } from './summaryStat';
 export interface ConditionMeasurementStats {
   condition: string;
   measurement: string;
+  /**
+     * Current Qa limit for this rotor, condition and measurement (null when unknown).
+     * @nullable
+     */
+  limit?: number | null;
   first: SummaryStat;
   last: SummaryStat;
 }

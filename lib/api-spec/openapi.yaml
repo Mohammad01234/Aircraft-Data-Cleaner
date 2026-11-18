@@ -297,6 +297,9 @@ components:
       properties:
         condition: { type: string }
         measurement: { type: string }
+        limit:
+          type: ["number", "null"]
+          description: Current Qa limit for this rotor, condition and measurement (null when unknown).
         first: { $ref: "#/components/schemas/SummaryStat" }
         last: { $ref: "#/components/schemas/SummaryStat" }
     OtherConditionTotals:

@@ -541,7 +541,7 @@ function Workbench() {
                     <div className="text-[12px] font-bold text-[#344649]">
                       Flight distribution
                     </div>
-                    <div className="mt-1 text-[9px] text-[#858b85]">
+                    <div className="mt-1 text-[12px] text-[#858b85]">
                       Average flights per test across the uploaded dataset
                     </div>
                   </div>
@@ -656,7 +656,7 @@ function Workbench() {
                       <span className="block text-[11px] font-semibold text-[#36484b]">
                         {choice.title}
                       </span>
-                      <span className="mt-1 block text-[9px] leading-4 text-[#858c88]">
+                      <span className="mt-1 block text-[12px] leading-4 text-[#858c88]">
                         {choice.detail}
                       </span>
                     </span>
@@ -804,8 +804,8 @@ function HistogramCard({
 
   return (
     <div className="min-w-0 rounded-lg border border-[#e0dbcf] bg-[#fbfaf5] p-4" data-testid={`histogram-${title}`}>
-      <div className="text-[10px] font-bold text-[#344649]">{title}</div>
-      <div className="mt-1 font-mono text-[8px] text-[#858b85]">
+      <div className="text-[12px] font-bold text-[#344649]">{title}</div>
+      <div className="mt-1 font-mono text-[12px] text-[#858b85]">
         {values.length.toLocaleString()} tests · max {max} · mean {mean.toFixed(2)}
       </div>
 
@@ -839,7 +839,7 @@ function HistogramCard({
             ))}
           </div>
 
-          <div className="mt-3 text-[8px] text-[#858b85]">X: {xLabel} · Y: number of tests</div>
+          <div className="mt-3 text-[11px] text-[#858b85]">X: {xLabel} · Y: number of tests</div>
         </>
       )}
     </div>
@@ -873,7 +873,7 @@ function FirstLastCharts({ stats, totals }: { stats: RotorStats[]; totals?: Othe
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-xl">
             <div className="text-[11px] font-bold text-[#344649]">8 · Other conditions · first vs last flight</div>
-            <div className="mt-1 text-[9px] leading-relaxed text-[#858b85]">
+            <div className="mt-1 text-[12px] leading-re laxed text-[#858b85]">
               Tests with at least 2 flights that have data in a condition other than Bodenlauf/Ground/Parallel.
               For each condition (including the Bodenlauf/Ground values of those flights), bars show the mean
               of the first and the last such flight, whiskers ±1 SD, the number under a bar is n (tests), and
@@ -882,13 +882,13 @@ function FirstLastCharts({ stats, totals }: { stats: RotorStats[]; totals?: Othe
           </div>
           <div className="flex flex-wrap gap-3">
             <div className="rounded-md bg-[#e8ece5] px-4 py-2.5">
-              <div className="font-mono text-[8px] uppercase tracking-[.1em] text-[#718079]">Tests ≥ 2 other-condition flights</div>
+              <div className="font-mono text-[12px] uppercase tracking-[.1em] text-[#718079]">Tests ≥ 2 other-condition flights</div>
               <div className="mt-1 text-[20px] font-extrabold tracking-[-.04em] text-[#2d4145]">
                 {totals ? totals.testsWithTwoOtherConditionFlights.toLocaleString() : '—'}
               </div>
             </div>
             <div className="rounded-md bg-[#e8ece5] px-4 py-2.5">
-              <div className="font-mono text-[8px] uppercase tracking-[.1em] text-[#718079]">Other-condition flights in those tests</div>
+              <div className="font-mono text-[12px] uppercase tracking-[.1em] text-[#718079]">Other-condition flights in those tests</div>
               <div className="mt-1 text-[20px] font-extrabold tracking-[-.04em] text-[#2d4145]">
                 {totals ? totals.otherConditionFlightsInThoseTests.toLocaleString() : '—'}
               </div>
@@ -916,7 +916,7 @@ function FirstLastCharts({ stats, totals }: { stats: RotorStats[]; totals?: Othe
                   {item.rotor}
                 </button>
               ))}
-              <span className="ml-1 text-[9px] text-[#858b85]">
+              <span className="ml-1 text-[12px] text-[#858b85]">
                 {rotor.testsWithTwoOtherConditionFlights.toLocaleString()} tests with ≥ 2 {rotor.rotor} other-condition flights
               </span>
               <div className="ml-auto flex flex-wrap items-center gap-3 text-[9px] text-[#4c5a56]">
@@ -1025,9 +1025,9 @@ function FirstLastChart({ title, rows }: { title: string; rows: RotorStats['othe
           );
         })}
       </svg>
-      <details className="mt-1 text-[9px] text-[#4c5a56]">
+      <details className="mt-1 text-[12px] text-[#4c5a56]">
         <summary className="cursor-pointer text-[#858b85]">Show values</summary>
-        <table className="mt-2 w-full border-collapse font-mono text-[9px]">
+        <table className="mt-2 w-full border-collapse font-mono text-[12px]">
           <thead>
             <tr className="text-left text-[#858b85]">
               <th className="py-1 pr-2 font-normal">Condition</th>
@@ -1158,7 +1158,7 @@ function RotorStatsPanel({ stats, totals }: { stats: RotorStats[]; totals?: Othe
       </div>
       <div className="px-5 py-4 sm:px-6">
         <div className="text-[11px] font-bold text-[#2d4145]" data-testid="text-rotor-stat-title">{option.label}</div>
-        <div className="mt-1 max-w-3xl text-[9px] leading-relaxed text-[#77807e]">{option.description}</div>
+        <div className="mt-1 max-w-3xl text-[12px] leading-relaxed text-[#77807e]">{option.description}</div>
       </div>
       {(option.kind === 'total' ? totals == null || totals[option.id as TotalStatKey] == null : stats.length > 0 && stats.some((rotor) => (rotor as unknown as Record<string, unknown>)[option.id] == null)) ? (
         // The server sent counts from an older version that does not have this statistic yet.
@@ -1276,8 +1276,8 @@ function CountCell({ label, value, compact = false, decimals }: { label: string;
 
 function PanelHeading({ number, icon, title, tag }: { number: string; icon: ReactNode; title: string; tag?: string }) {
   return <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e3ded3] px-5 py-4 sm:px-6">
-    <div className="flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-md bg-[#e8ece5] text-[#44746a]">{icon}</span><div><div className="text-[12px] font-bold text-[#344649]">{title}</div><div className="mt-0.5 font-mono text-[8px] uppercase tracking-[.12em] text-[#91958c]">Section {number}</div></div></div>
-    {tag && <span className="rounded bg-[#f0eee6] px-2 py-1 font-mono text-[8px] uppercase tracking-[.08em] text-[#79827c]">{tag}</span>}
+    <div className="flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-md bg-[#e8ece5] text-[#44746a]">{icon}</span><div><div className="text-[12px] font-bold text-[#344649]">{title}</div><div className="mt-0.5 font-mono text-[12px] uppercase tracking-[.12em] text-[#91958c]">Section {number}</div></div></div>
+    {tag && <span className="rounded bg-[#f0eee6] px-2 py-1 font-mono text-[12px] uppercase tracking-[.08em] text-[#79827c]">{tag}</span>}
   </div>;
 }
 

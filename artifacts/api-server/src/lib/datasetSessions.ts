@@ -157,7 +157,7 @@ const HISTO_MAIN_ROTOR = new Set(["haupt", "main"]);
 const HISTO_TAIL_ROTOR = new Set(["heck", "tail"]);
 // Bump when a statistic's rules change: saved sessions with an older version are
 // recounted once when the server starts.
-const STATS_VERSION = 5;
+const STATS_VERSION = 8;
 const PAIRS: Array<[string, string]> = [
   ["84+39", "8439"],
   ["84+43", "8443"],
@@ -1230,6 +1230,8 @@ const QA_LATERAL_CHANGE_DAY = Date.UTC(2023, 6, 20) / DAY_MS;
 type QaFamily = "CH53" | "H145" | "GENERIC";
 type QaConfig = {
   family: QaFamily;
+  // Within the H145 family: BK117 (D2/D3) and H145 have different Tail/Cabin limits.
+  model?: "BK117" | "H145";
   conds: string[];
   cols: Array<[string, string]>;
   rotors: string[];
@@ -1255,7 +1257,8 @@ function buildQaConfig(aircraftType: unknown, trackUnits: unknown, tests: Record
     return { family, conds: QA_CH53_CONDS, cols: QA_CH53_COLS, rotors: ["Haupt", "Heck"], trackPart: "Haupt", trackLimit: mm ? 50.8 : 2.0 };
   }
   if (family === "H145") {
-    return { family, conds: QA_H145_CONDS, cols: QA_H145_COLS, rotors: ["Main", "Tail", "Cabin"], trackPart: "Main", trackLimit: mm ? 40.0 : 40.0 / 25.4 };
+    const model = normKey(aircraftType).includes("bk117") ? "BK117" : "H145";
+    return { family, model, conds: QA_H145_CONDS, cols: QA_H145_COLS, rotors: ["Main", "Tail", "Cabin"], trackPart: "Main", trackLimit: mm ? 40.0 : 40.0 / 25.4 };
   }
   const conds: string[] = [];
   const cols: Array<[string, string]> = [];
@@ -1299,14 +1302,24 @@ function qaConditionKey(cfg: QaConfig, cond: unknown): string {
   return key;
 }
 
-function qaBalanceLimit(cfg: QaConfig, rotor: string, axis: string, cond: string, flightDay: number): number {
+function qaBalanceLimit(cfg: QaConfig, rotor: string, axis: string, cond: string, flightDay: number): number | null {
   if (cfg.family === "CH53") {
     if (normKey(axis) === "lateral") return Number.isFinite(flightDay) && flightDay < QA_LATERAL_CHANGE_DAY ? 0.3 : 0.25;
     return 0.2;
   }
   if (cfg.family === "H145") {
+    // cond is already a Qa key: Bodenlauf/Ground/Parallel all arrive as "ground".
     const base: Record<string, number> = { ground: 0.4, hoverige: 0.1, "80kias": 0.15, "120kias": 0.15, vh: 0.15 };
-    if (normKey(rotor) === "tail" && normKey(cond) === "ground") return 0.2;
+    const part = normKey(rotor);
+    if (cfg.model === "BK117") {
+      // BK117 D2/D3: Tail Radial has a limit (0.2) only on the ground, none in other
+      // conditions. Cabin (Vert Cabi) uses the same limits as Main.
+      if (part === "tail") return normKey(cond) === "ground" ? 0.2 : null;
+      return base[normKey(cond)] ?? 0.2;
+    }
+    // H145: Cabin has no limits in any condition; Tail 0.2 on the ground, else as Main.
+    if (part === "cabin") return null;
+    if (part === "tail" && normKey(cond) === "ground") return 0.2;
     return base[normKey(cond)] ?? 0.2;
   }
   return 0.2;
@@ -1339,6 +1352,7 @@ function computeFlightRotorQa(flight: RecordValue, cfg: QaConfig, flightDay: num
     for (const [rotor, axis] of cfg.cols) {
       const value = balance.get(`${key}|${normKey(rotor)}|${normKey(axis)}`);
       const limit = qaBalanceLimit(cfg, rotor, axis, cond, flightDay);
+      if (limit == null) continue; // no limit for this measurement: not part of Qa
       terms.push({ rotor, ratio: value == null ? QA_DEFAULT_FACTOR : value / limit });
     }
   }
@@ -1403,7 +1417,7 @@ function rotorDataForFlight(flight: RecordValue, cfg: QaConfig): Map<string, Rot
   const result = new Map<string, RotorFlightData>();
   const forRotor = (part: unknown): RotorFlightData | null => {
     const rotor = text(part).trim();
-    if (!rotor || NOT_A_ROTOR.has(rotor.toLowerCase())) return null;
+    if (!rotor) return null;
     let data = result.get(rotor);
     if (!data) {
       data = { hasGround: false, hasOther: false, balance: new Map(), track: new Map() };
@@ -1451,18 +1465,23 @@ function rotorWithinLimits(rotor: string, data: RotorFlightData, cfg: QaConfig, 
   const axes = cfg.cols.filter(([part]) => normKey(part) === normKey(rotor)).map(([, axis]) => axis);
   const needsTrack = normKey(cfg.trackPart) !== "" && normKey(cfg.trackPart) === normKey(rotor);
   if (!cfg.conds.length || (!axes.length && !needsTrack)) return null;
+  // A rotor with no limit in any condition (e.g. H145 Cabin) has no "within limits".
+  let anyLimit = needsTrack;
   for (const cond of cfg.conds) {
     const key = qaConditionKey(cfg, cond);
     for (const axis of axes) {
       const reading = data.balance.get(`${key}|${normKey(axis)}`);
-      if (!reading || reading.value > qaBalanceLimit(cfg, rotor, axis, cond, flightDay)) return false;
+      const limit = qaBalanceLimit(cfg, rotor, axis, cond, flightDay);
+      if (limit == null) continue; // no limit: this measurement is not required
+      anyLimit = true;
+      if (!reading || reading.value > limit) return false;
     }
     if (needsTrack) {
       const reading = data.track.get(key);
       if (!reading || reading.value > cfg.trackLimit) return false;
     }
   }
-  return true;
+  return anyLimit ? true : null;
 }
 
 const GROUND_LABEL = "Bodenlauf/Ground";
@@ -1645,8 +1664,13 @@ function finishFirstLast(target: FirstLastAccumulator, cfg: QaConfig | null, rot
 
 function finishRotorStats(stats: Map<string, RotorAccumulator>, cfg: QaConfig | null): RotorStats[] {
   const ratio = (a: number, b: number) => (b > 0 ? a / b : 0);
+  // Known rotors in their usual order (Main, Tail, Cabin / Haupt, Heck), then by name.
+  const rank = (rotor: string) => {
+    const index = cfg ? cfg.rotors.findIndex((name) => normKey(name) === normKey(rotor)) : -1;
+    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+  };
   return [...stats.values()]
-    .sort((a, b) => a.rotor.localeCompare(b.rotor))
+    .sort((a, b) => rank(a.rotor) - rank(b.rotor) || a.rotor.localeCompare(b.rotor))
     .map((acc) => ({
       rotor: acc.rotor,
       tests: acc.tests,

@@ -232,6 +232,8 @@ function Workbench() {
   const [activity, setActivity] = useState<LocalEvent[]>([]);
   const [exportRequested, setExportRequested] = useState(false);
   const [showHistos, setShowHistos] = useState(false);
+  // Histograms hide the 0 bin (tests with no such flight) unless this is on.
+  const [showZeros, setShowZeros] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const sessionQuery = useGetDataSession({ sessionId: sessionId || '' }, {
@@ -558,6 +560,7 @@ function Workbench() {
                       </div>
                     </div>
 
+                    <div className="flex flex-col items-stretch gap-2">
                     <button
                       type="button"
                       onClick={() => setShowHistos((current) => !current)}
@@ -568,6 +571,20 @@ function Workbench() {
                       <Activity size={14} />
                       {showHistos ? 'Hide Histos' : 'See Histos'}
                     </button>
+                    {showHistos && (
+                      <button
+                        type="button"
+                        onClick={() => setShowZeros((current) => !current)}
+                        className={`inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-[10px] font-bold transition ${
+                          showZeros ? 'bg-[#1f5960] text-white hover:bg-[#17484f]' : 'bg-[#e8ece5] text-[#1f5960] hover:bg-[#dde3da]'
+                        }`}
+                        aria-pressed={showZeros}
+                        data-testid="button-show-zeros"
+                      >
+                        {showZeros ? 'Hide Zeros' : 'Show Zeros'}
+                      </button>
+                    )}
+                    </div>
                   </div>
                 </div>
 
@@ -576,7 +593,7 @@ function Workbench() {
                   <div className="grid gap-4 border-t border-[#e5e0d5] bg-[#f7f5ed] p-4 sm:grid-cols-2 xl:grid-cols-3">
                     {analytics?.histograms ? (
                       HISTOGRAMS.map(({ key, title, xLabel }) => (
-                        <HistogramCard key={key} title={title} xLabel={xLabel} values={analytics.histograms?.[key] ?? []} />
+                        <HistogramCard key={key} title={title} xLabel={xLabel} values={analytics.histograms?.[key] ?? []} showZeros={showZeros} />
                       ))
                     ) : (
                       <p className="text-[10px] text-[#858b85]">
@@ -789,38 +806,48 @@ function HistogramCard({
   title,
   xLabel,
   values,
+  showZeros,
 }: {
   title: string;
   xLabel: string;
   values: number[];
+  showZeros: boolean;
 }) {
   const max = values.length ? Math.max(...values) : 0;
   const counts = new Array<number>(max + 1).fill(0);
   for (const value of values) counts[value] += 1;
-  const maxFrequency = Math.max(1, ...counts);
+  // The 0 bin (tests without such a flight) is hidden unless "Show Zeros" is on.
+  // Max and mean in the header always include every test.
+  const bins = counts
+    .map((frequency, flightCount) => ({ flightCount, frequency }))
+    .filter((bin) => showZeros || bin.flightCount > 0);
+  const maxFrequency = Math.max(1, ...bins.map((bin) => bin.frequency));
   const mean = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
   // Keep labels readable when there are many bins.
-  const labelStep = counts.length > 24 ? Math.ceil(counts.length / 12) : 1;
+  const labelStep = bins.length > 24 ? Math.ceil(bins.length / 12) : 1;
 
   return (
     <div className="min-w-0 rounded-lg border border-[#e0dbcf] bg-[#fbfaf5] p-4" data-testid={`histogram-${title}`}>
       <div className="text-[12px] font-bold text-[#344649]">{title}</div>
       <div className="mt-1 font-mono text-[12px] text-[#858b85]">
         {values.length.toLocaleString()} tests · max {max} · mean {mean.toFixed(2)}
+        {!showZeros && counts[0] > 0 && ` · ${counts[0].toLocaleString()} with 0 hidden`}
       </div>
 
       {values.length === 0 ? (
         <div className="py-8 text-center text-[9px] text-[#858b85]">No data available</div>
+      ) : bins.length === 0 ? (
+        <div className="py-8 text-center text-[11px] text-[#858b85]">All tests are 0. Click Show Zeros to see them.</div>
       ) : (
         <>
           <div className="mt-5 flex h-32 items-end gap-px border-b border-l border-[#dcd7ca] px-1">
-            {counts.map((frequency, flightCount) => (
+            {bins.map(({ frequency, flightCount }) => (
               <div
                 key={flightCount}
                 className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1"
                 title={`${flightCount} flights: ${frequency} test(s)`}
               >
-                {frequency > 0 && counts.length <= 24 && (
+                {frequency > 0 && bins.length <= 24 && (
                   <span className="font-mono text-[7px] text-[#687773]">{frequency}</span>
                 )}
                 <div
@@ -832,7 +859,7 @@ function HistogramCard({
           </div>
 
           <div className="mt-1.5 flex gap-px px-1">
-            {counts.map((_, flightCount) => (
+            {bins.map(({ flightCount }) => (
               <div key={flightCount} className="min-w-0 flex-1 text-center font-mono text-[7px] text-[#858b85]">
                 {flightCount % labelStep === 0 ? flightCount : ''}
               </div>
@@ -864,6 +891,7 @@ function niceStep(range: number, ticks: number) {
 function FirstLastCharts({ stats, totals }: { stats: RotorStats[]; totals?: OtherConditionTotals }) {
   const rotors = stats.filter((rotor) => (rotor.otherFirstLast ?? []).length > 0);
   const [selected, setSelected] = useState<string | null>(null);
+  const [showLimit, setShowLimit] = useState(true);
   const rotor = rotors.find((item) => item.rotor === selected) ?? rotors[0];
   const measurements = rotor ? [...new Set(rotor.otherFirstLast.map((row) => row.measurement))] : [];
 
@@ -923,6 +951,16 @@ function FirstLastCharts({ stats, totals }: { stats: RotorStats[]; totals?: Othe
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: FIRST_COLOR }} />First flight (test start)</span>
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: LAST_COLOR }} />Last flight (test end)</span>
                 <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4" style={{ background: LIMIT_COLOR }} />Qa limit</span>
+                <button 
+                  type="button"
+                  onClick={() => setShowLimit((current) => !current)}
+                  className={`rounded-md px-3 py-1.5 text-[12px] font-bold transition ${
+                    showLimit ? 'bg-[#1f5960] text-white hover:bg-[#17484f]' : 'bg-[#e8ece5] text-[#1f5960] hover:bg-[#dde3da]'
+                  }`}
+                  aria-pressed={showLimit}
+                >
+                  {showLimit ? 'Hide limit' : 'Show limit'}
+                </button>
               </div>
             </div>
 
@@ -932,6 +970,7 @@ function FirstLastCharts({ stats, totals }: { stats: RotorStats[]; totals?: Othe
                   key={`${rotor.rotor}-${measurement}`}
                   title={`${rotor.rotor} · ${measurement}`}
                   rows={rotor.otherFirstLast.filter((row) => row.measurement === measurement)}
+                  showLimit={showLimit}
                 />
               ))}
             </div>
@@ -942,14 +981,14 @@ function FirstLastCharts({ stats, totals }: { stats: RotorStats[]; totals?: Othe
   );
 }
 
-function FirstLastChart({ title, rows }: { title: string; rows: RotorStats['otherFirstLast'] }) {
+function FirstLastChart({ title, rows, showLimit }: { title: string; rows: RotorStats['otherFirstLast']; showLimit: boolean }) {
   const width = 640;
   const height = 300;
   const margin = { top: 14, right: 10, bottom: 52, left: 46 };
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
   const top = (stat: { mean: number | null; sd: number | null }) => (stat.mean ?? 0) + (stat.sd ?? 0);
-  const rawMax = Math.max(0.0001, ...rows.flatMap((row) => [top(row.first), top(row.last), row.limit ?? 0]));
+  const rawMax = Math.max(0.0001, ...rows.flatMap((row) => [top(row.first), top(row.last), showLimit ?(row.limit ?? 0) : 0]));
   const step = niceStep(rawMax, 5);
   const yMax = Math.ceil((rawMax * 1.05) / step) * step;
   const ticks = Array.from({ length: Math.round(yMax / step) + 1 }, (_, index) => index * step);
@@ -1006,7 +1045,7 @@ function FirstLastChart({ title, rows }: { title: string; rows: RotorStats['othe
                   </text>
                 </g>
               ))}
-              {row.limit != null && (
+              {showLimit && row.limit != null && (
                 <line
                   x1={center - groupW * 0.42}
                   x2={center + groupW * 0.42}
@@ -1129,7 +1168,7 @@ function RotorStatsPanel({ stats, totals }: { stats: RotorStats[]; totals?: Othe
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e0d5] px-5 py-4 sm:px-6">
         <div>
           <div className="text-[12px] font-bold text-[#344649]">Rotor statistics</div>
-          <div className="mt-1 text-[9px] text-[#858b85]">Pick a statistic from the menu bar · Cabin is not counted · Parallel counts as Bodenlauf/Ground</div>
+          <div className="mt-1 text-[9px] text-[#858b85]">Pick a statistic from the menu bar · Parallel counts as Bodenlauf/Ground</div>
         </div>
         <Menubar className="h-auto flex-wrap border-[#d8d2c5] bg-[#f4f1e8] p-1" data-testid="menubar-rotor-stats">
           {ROTOR_STAT_MENUS.map((menu) => {

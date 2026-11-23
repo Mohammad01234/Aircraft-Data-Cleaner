@@ -157,7 +157,7 @@ const HISTO_MAIN_ROTOR = new Set(["haupt", "main"]);
 const HISTO_TAIL_ROTOR = new Set(["heck", "tail"]);
 // Bump when a statistic's rules change: saved sessions with an older version are
 // recounted once when the server starts.
-const STATS_VERSION = 8;
+const STATS_VERSION = 9;
 const PAIRS: Array<[string, string]> = [
   ["84+39", "8439"],
   ["84+43", "8443"],
@@ -1230,8 +1230,8 @@ const QA_LATERAL_CHANGE_DAY = Date.UTC(2023, 6, 20) / DAY_MS;
 type QaFamily = "CH53" | "H145" | "GENERIC";
 type QaConfig = {
   family: QaFamily;
-  // Within the H145 family: BK117 (D2/D3) and H145 have different Tail/Cabin limits.
-  model?: "BK117" | "H145";
+  // Within the H145 family: BK117 (D2/D3), H145-LUH and H145 have different Tail/Cabin limits.
+  model?: "BK117" | "H145LUH" | "H145";
   conds: string[];
   cols: Array<[string, string]>;
   rotors: string[];
@@ -1257,7 +1257,8 @@ function buildQaConfig(aircraftType: unknown, trackUnits: unknown, tests: Record
     return { family, conds: QA_CH53_CONDS, cols: QA_CH53_COLS, rotors: ["Haupt", "Heck"], trackPart: "Haupt", trackLimit: mm ? 50.8 : 2.0 };
   }
   if (family === "H145") {
-    const model = normKey(aircraftType).includes("bk117") ? "BK117" : "H145";
+    const typeKey = normKey(aircraftType);
+    const model = typeKey.includes("bk117") ? "BK117" : typeKey.includes("luh") ? "H145LUH" : "H145";
     return { family, model, conds: QA_H145_CONDS, cols: QA_H145_COLS, rotors: ["Main", "Tail", "Cabin"], trackPart: "Main", trackLimit: mm ? 40.0 : 40.0 / 25.4 };
   }
   const conds: string[] = [];
@@ -1311,13 +1312,18 @@ function qaBalanceLimit(cfg: QaConfig, rotor: string, axis: string, cond: string
     // cond is already a Qa key: Bodenlauf/Ground/Parallel all arrive as "ground".
     const base: Record<string, number> = { ground: 0.4, hoverige: 0.1, "80kias": 0.15, "120kias": 0.15, vh: 0.15 };
     const part = normKey(rotor);
+    // BK117 D2/D3 and H145-LUH: Tail Radial has a limit (0.2) only in
+    // Bodenlauf/Ground/Parallel, none in other conditions.
+    if ((cfg.model === "BK117" || cfg.model === "H145LUH") && part === "tail") {
+      return normKey(cond) === "ground" ? 0.2 : null;
+    }
     if (cfg.model === "BK117") {
       // BK117 D2/D3: Tail Radial has a limit (0.2) only on the ground, none in other
       // conditions. Cabin (Vert Cabi) uses the same limits as Main.
       if (part === "tail") return normKey(cond) === "ground" ? 0.2 : null;
       return base[normKey(cond)] ?? 0.2;
     }
-    // H145: Cabin has no limits in any condition; Tail 0.2 on the ground, else as Main.
+    // H145 (incl. LUH): Cabin has no limits in any condition; H145 Tail 0.2 on the ground, else as Main.
     if (part === "cabin") return null;
     if (part === "tail" && normKey(cond) === "ground") return 0.2;
     return base[normKey(cond)] ?? 0.2;

@@ -817,12 +817,11 @@ function HistogramCard({
   const counts = new Array<number>(max + 1).fill(0);
   for (const value of values) counts[value] += 1;
   // The 0 bin (tests without such a flight) is hidden unless "Show Zeros" is on.
-  // Max and mean in the header always include every test.
+  // Max in the header always includes every test.
   const bins = counts
     .map((frequency, flightCount) => ({ flightCount, frequency }))
     .filter((bin) => showZeros || bin.flightCount > 0);
   const maxFrequency = Math.max(1, ...bins.map((bin) => bin.frequency));
-  const mean = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
   // Keep labels readable when there are many bins.
   const labelStep = bins.length > 24 ? Math.ceil(bins.length / 12) : 1;
 
@@ -830,7 +829,7 @@ function HistogramCard({
     <div className="min-w-0 rounded-lg border border-[#e0dbcf] bg-[#fbfaf5] p-4" data-testid={`histogram-${title}`}>
       <div className="text-[12px] font-bold text-[#344649]">{title}</div>
       <div className="mt-1 font-mono text-[12px] text-[#858b85]">
-        {values.length.toLocaleString()} tests · max {max} · mean {mean.toFixed(2)}
+        {values.length.toLocaleString()} tests · max {max}
         {!showZeros && counts[0] > 0 && ` · ${counts[0].toLocaleString()} with 0 hidden`}
       </div>
 

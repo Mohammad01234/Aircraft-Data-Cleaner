@@ -1816,15 +1816,10 @@ function applyIntraAircraftRules(
     if (target) {
       const flights = asItems(target.Flights);
       if (flights.length > 1) {
-        const candidate = asRecord(flights[1]);
-        if (asItems(candidate.FftData).length) {
-          log.push("85+07: the second flight contains FFT data and was retained for manual review.");
-        } else {
-          const removed = flights.splice(1, 1);
-          target.Flights = flights;
-          recomputeTestRange(target);
-          log.push(`85+07: removed the second flight from the 23.07.2022 test (${text(asRecord(removed[0]).FlightNumber, "flight number not set")}).`);
-        }
+        const removed = flights.splice(1, 1);
+        target.Flights = flights;
+        recomputeTestRange(target);
+        log.push(`85+07: removed the second flight from the 23.07.2022 test (${text(asRecord(removed[0]).FlightNumber, "flight number not set")}).`);
       }
     }
   }
@@ -1844,13 +1839,6 @@ function applyIntraAircraftRules(
       tests = tests.filter((test) => {
         const remove = dates.has(dateKey(test.Started));
         if (!remove) return true;
-        const hasFft = asItems(test.Flights).some(
-          (flight) => asItems(asRecord(flight).FftData).length > 0,
-        );
-        if (hasFft) {
-          log.push(`${tail}: retained targeted test starting ${dateKey(test.Started)} because it contains FFT data.`);
-          return true;
-        }
         log.push(`${tail}: removed targeted test starting ${dateKey(test.Started)}.`);
         return false;
       });
@@ -1971,15 +1959,6 @@ export async function previewCleanup(
   for await (const source of aircraftItems(session.rawPath)) {
     const tail = text(source.TailNumber);
     if (options.removeJunkAircraft && (tail === "J" || tail === "V85+00")) {
-      const hasFft = asItems(source.Tests).some((test) =>
-        asItems(asRecord(test).Flights).some(
-          (flight) => asItems(asRecord(flight).FftData).length > 0,
-        ),
-      );
-      if (hasFft) {
-        operations.push(`Kept ${tail} because it contains FFT data; manual review required before removing it.`);
-        continue;
-      }
       operations.push(`Removed non-aircraft entry ${tail}.`);
       continue;
     }
@@ -2028,19 +2007,28 @@ export async function previewCleanup(
 
   await writeDataset(previewPath, metadata, records, groups, separatedTests);
   const after = await scanDataset(previewPath);
+  // FFT values are never edited, so the only FFT change cleanup can make is removing
+  // captures together with the flights, tests, aircraft or readings they belong to.
+  const fftSamplesRemoved = session.counts.fftSamples - after.counts.fftSamples;
+  const fftCapturesRemoved = session.counts.fftCaptures - after.counts.fftCaptures;
   const preview = {
     before: session.counts,
     after: after.counts,
     operations,
     warnings,
-    fftSamplesChanged: 0,
+    // Measured: FFT samples in the original minus FFT samples after cleanup.
+    fftSamplesChanged: fftSamplesRemoved,
   };
   session.previewPath = previewPath;
   session.preview = preview;
   session.options = options;
   session.separatedTests = separatedTests;
   session.log.push(`Cleanup preview ready: ${operations.length} proposed actions, ${warnings.length} manual-review warning(s).`);
-  session.log.push("All FFT capture and sample values were retained unchanged; every number keeps its exact original text.");
+  session.log.push(
+    fftSamplesRemoved === 0 && fftCapturesRemoved === 0
+      ? "No FFT captures or samples are removed by this proposal; FFT values are never edited."
+      : `This proposal removes ${fftCapturesRemoved.toLocaleString("en-US")} FFT capture(s) with ${fftSamplesRemoved.toLocaleString("en-US")} sample(s), together with the data they belong to. Remaining FFT values are not edited.`,
+  );
   await saveSession(session);
   return preview;
 }

@@ -331,15 +331,23 @@ function Workbench() {
   };
   const applyProposal = () => {
     if (!sessionId || !preview) return;
-    if (preview.fftSamplesChanged !== 0) return;
-    if (!window.confirm('Apply this reviewed cleanup proposal to the temporary session? FFT samples will remain unchanged.')) return;
+    const fftRemoved = preview.fftSamplesChanged;
+    const fftNote = fftRemoved > 0
+      ? ` ${fftRemoved.toLocaleString()} FFT samples will be removed together with the data they belong to.`
+      : ' No FFT samples will be removed.';
+    if (!window.confirm(`Apply this reviewed cleanup proposal to the temporary session?${fftNote}`)) return;
     applyCleanup.mutate({ sessionId }, {
       onSuccess: (updated) => {
         qc.setQueryData(getGetDataSessionQueryKey({ sessionId }), updated);
         void qc.invalidateQueries({ queryKey: getGetSessionAnalyticsQueryKey(sessionId) });
         void qc.invalidateQueries({ queryKey: getGetFftAuditQueryKey(sessionId) });
         void qc.invalidateQueries({ queryKey: getGetSessionFlightsQueryKey(flightsParams) });
-        addActivity('Approved cleanup applied · FFT samples preserved', 'success');
+        addActivity(
+          fftRemoved > 0
+            ? `Approved cleanup applied · ${fftRemoved.toLocaleString()} FFT samples removed`
+            : 'Approved cleanup applied · no FFT samples removed',
+          'success',
+        );
         setExportRequested(false);
       },
       onError: () => addActivity('Apply failed · session remains available', 'warning'),
@@ -401,7 +409,7 @@ function Workbench() {
           <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.15em] text-[#b9c9c5]"><LockKeyhole size={12} /> Temporary by design</div>
           <p className="mt-2 text-[11px] leading-[1.65] text-[#91a3a5]">Session data is held only for the review window. Export before closing.</p>
           <div className="mt-4 flex items-center gap-2 border-t border-white/10 pt-3 font-mono text-[9px] text-[#d3b166]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#d3b166]" /> FFT samples locked
+            <span className="h-1.5 w-1.5 rounded-full bg-[#d3b166]" /> FFT values never edited
           </div>
         </div>
         <div className="border-t border-white/10 px-6 py-4 font-mono text-[9px] tracking-[.12em] text-[#819398]">DATA QUALITY CELL · 01</div>
@@ -482,11 +490,11 @@ function Workbench() {
                     <div className="mt-6 space-y-5">
                       {[
                         ['01', 'Import', 'Open an isolated review session'],
-                        ['02', 'Inspect', 'Preview rules and retain FFT evidence'],
+                        ['02', 'Inspect', 'Preview rules and what they remove'],
                         ['03', 'Release', 'Apply only after review, then export'],
                       ].map(([number, title, detail]) => <div key={number} className="flex gap-4"><span className="font-mono text-[10px] text-[#d0a951]">{number}</span><div><div className="text-[12px] font-bold">{title}</div><div className="mt-1 text-[10px] leading-4 text-[#a6b5b3]">{detail}</div></div></div>)}
                     </div>
-                    <div className="mt-7 border-t border-white/10 pt-4 font-mono text-[9px] leading-5 text-[#a5b2b0]">PROCESSING NOTE<br /><span className="text-[#d8c08c]">FFT samples are protected from cleanup.</span></div>
+                    <div className="mt-7 border-t border-white/10 pt-4 font-mono text-[9px] leading-5 text-[#a5b2b0]">PROCESSING NOTE<br /><span className="text-[#d8c08c]">FFT values are never edited. FFT captures are removed together with the flights, tests or readings that cleanup removes.</span></div>
                   </div>
                 </div>
                 <ActivityPanel events={shownEvents} />
@@ -529,8 +537,8 @@ function Workbench() {
                 <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-[#d8d2c5] bg-[#e1dbce]">
                   {countFields.slice(4).map(([key, label]) => <CountCell key={key} label={label} value={counts?.[key] ?? 0} compact />)}
                   <div className="col-span-3 flex items-center justify-between bg-[#f8f6ee] px-4 py-3">
-                    <div className="flex items-center gap-2 text-[10px] font-semibold text-[#4c625c]"><ShieldCheck size={14} /> FFT evidence protection</div>
-                    <span className="font-mono text-[9px] uppercase tracking-[.08em] text-[#54806d]">Read-only</span>
+                    <div className="flex items-center gap-2 text-[10px] font-semibold text-[#4c625c]"><ShieldCheck size={14} /> FFT values</div>
+                    <span className="font-mono text-[9px] uppercase tracking-[.08em] text-[#54806d]">Never edited</span>
                   </div>
                 </div>
               </section>
@@ -706,7 +714,7 @@ function Workbench() {
                   {preview && <div className="border-t border-[#ded8ca] px-5 py-5 sm:px-6" data-testid="panel-cleanup-preview">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div><div className="font-mono text-[9px] uppercase tracking-[.13em] text-[#77817e]">Proposal review</div><div className="mt-1 text-[12px] font-bold">Before <ArrowRight className="mx-1 inline" size={12} /> After</div></div>
-                      <div className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[9px] ${preview.fftSamplesChanged === 0 ? 'bg-[#e4ede4] text-[#467256]' : 'bg-[#f5e4df] text-[#9c4b41]'}`}><AudioLines size={12} /> FFT delta: {preview.fftSamplesChanged}</div>
+                      <div className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[9px] ${preview.fftSamplesChanged === 0 ? 'bg-[#e4ede4] text-[#467256]' : 'bg-[#f3ecd9] text-[#936c2d]'}`} title="FFT samples in the original file minus FFT samples after this cleanup"><AudioLines size={12} /> FFT samples removed: {preview.fftSamplesChanged.toLocaleString()}</div>
                     </div>
                     <div className="mt-3 overflow-x-auto rounded-md border border-[#e4dfd3]">
                       <table className="w-full min-w-[410px] text-left text-[9px]"><thead className="bg-[#f0eee6] font-mono uppercase text-[#78817d]"><tr><th className="px-3 py-2">Record type</th><th className="px-3 py-2 text-right">Before</th><th className="px-3 py-2 text-right">After</th><th className="px-3 py-2 text-right">Δ</th></tr></thead><tbody className="divide-y divide-[#ece7db]">{countFields.map(([key, label]) => {
@@ -719,8 +727,8 @@ function Workbench() {
                       <div><div className="mb-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#74807d]">Review notes</div>{preview.warnings.length ? <ul className="space-y-1.5">{preview.warnings.map((warning, i) => <li key={`${warning}-${i}`} className="flex gap-2 text-[10px] leading-4 text-[#8d6337]"><AlertCircle size={12} className="mt-0.5 shrink-0" />{warning}</li>)}</ul> : <p className="text-[10px] text-[#54806c]">No warnings returned.</p>}</div>
                     </div>
                     <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8e2d5] pt-4">
-                      <p className="flex items-center gap-2 text-[9px] text-[#66716d]"><ShieldCheck size={14} className="text-[#4f8069]" /> Apply only after review · FFT samples remain untouched</p>
-                      <button onClick={applyProposal} disabled={applyCleanup.isPending || preview.fftSamplesChanged !== 0 || session.cleaned} className="inline-flex items-center justify-center gap-2 rounded-md bg-[#a56d31] px-4 py-2.5 text-[10px] font-bold text-[#fff9ed] hover:bg-[#8f5a26] disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-apply-cleanup">
+                      <p className="flex items-center gap-2 text-[9px] text-[#66716d]"><ShieldCheck size={14} className="text-[#4f8069]" /> Apply only after review · FFT values are never edited</p>
+                      <button onClick={applyProposal} disabled={applyCleanup.isPending || session.cleaned} className="inline-flex items-center justify-center gap-2 rounded-md bg-[#a56d31] px-4 py-2.5 text-[10px] font-bold text-[#fff9ed] hover:bg-[#8f5a26] disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-apply-cleanup">
                         {applyCleanup.isPending ? <LoaderCircle size={13} className="animate-spin" /> : <CheckCircle2 size={13} />} {session.cleaned ? 'Cleanup already applied' : applyCleanup.isPending ? 'Applying…' : 'Apply reviewed changes'}
                       </button>
                     </div>
@@ -730,13 +738,13 @@ function Workbench() {
 
                 <div className="flex flex-col gap-5">
                   <div className="overflow-hidden rounded-xl border border-[#d8d2c5] bg-[#fbfaf5]">
-                    <PanelHeading number="FFT" icon={<AudioLines size={15} />} title="Sample audit" tag={fft?.preserved ? 'Samples preserved' : 'Integrity check'} />
+                    <PanelHeading number="FFT" icon={<AudioLines size={15} />} title="Sample audit" tag={fft?.preserved ? 'Values not edited' : 'Integrity check'} />
                     {fftQuery.isLoading ? <div className="space-y-3 p-5"><div className="skeleton h-5 w-2/3" /><div className="skeleton h-14" /></div> : fftQuery.isError ? <div className="px-5 py-4"><InlineError text={friendlyError(fftQuery.error)} onRetry={() => void fftQuery.refetch()} /></div> : fft ? <div className="p-5">
                       <div className="grid grid-cols-2 gap-3">
                         <div className="rounded-md bg-[#f1efe7] p-3"><div className="font-mono text-[9px] uppercase tracking-[.1em] text-[#858b85]">Captures</div><div className="mt-1.5 text-[20px] font-extrabold tracking-[-.05em]">{fft.captures.toLocaleString()}</div></div>
                         <div className="rounded-md bg-[#f1efe7] p-3"><div className="font-mono text-[9px] uppercase tracking-[.1em] text-[#858b85]">Samples</div><div className="mt-1.5 text-[20px] font-extrabold tracking-[-.05em]">{fft.samples.toLocaleString()}</div></div>
                       </div>
-                      <div className={`mt-3 flex items-center gap-2 rounded-md px-3 py-2.5 text-[10px] font-semibold ${fft.preserved ? 'bg-[#e4eee5] text-[#467057]' : 'bg-[#f5e5df] text-[#9d5144]'}`} data-testid="status-fft-preserved"><ShieldCheck size={14} /> {fft.preserved ? 'Samples retained unchanged' : 'Preservation not confirmed'}</div>
+                      <div className={`mt-3 flex items-center gap-2 rounded-md px-3 py-2.5 text-[10px] font-semibold ${fft.preserved ? 'bg-[#e4eee5] text-[#467057]' : 'bg-[#f5e5df] text-[#9d5144]'}`} data-testid="status-fft-preserved"><ShieldCheck size={14} /> {fft.preserved ? 'FFT values are never edited by cleanup' : 'Not confirmed'}</div>
                       {fft.findings.length > 0 ? <div className="mt-4 space-y-2">{fft.findings.map((finding) => <div key={finding.code} className="flex items-center justify-between gap-2 border-b border-[#ebe6dc] pb-2 last:border-0"><div className="min-w-0"><div className="truncate text-[10px] font-semibold text-[#586561]">{finding.label}</div><div className="mt-0.5 font-mono text-[8px] text-[#92958d]">{finding.code}</div></div><span className={`shrink-0 rounded px-2 py-1 font-mono text-[8px] uppercase ${finding.severity === 'critical' ? 'bg-[#f5e2de] text-[#9d4a41]' : finding.severity === 'warning' ? 'bg-[#f3ecd9] text-[#936c2d]' : 'bg-[#e7ece8] text-[#667c6d]'}`}>{finding.severity} · {finding.count}</span></div>)}</div> : <div className="mt-4 text-[10px] text-[#7b8580]">No findings reported for these samples.</div>}
                     </div> : null}
                   </div>

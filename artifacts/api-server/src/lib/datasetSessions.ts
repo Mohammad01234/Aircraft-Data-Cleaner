@@ -4,6 +4,7 @@ import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { once } from "node:events";
+import { StringDecoder } from "node:string_decoder";
 import { chain } from "stream-chain";
 import { parser } from "stream-json";
 import { ignore } from "stream-json/filters/ignore.js";
@@ -1880,13 +1881,107 @@ function applyIntraAircraftRules(
   return aircraft;
 }
 
-const EOL = "\r\n";
-// 2-space indent, CRLF, nested to the given depth (matches the original file)
-const pretty = (value: unknown, depth: number) =>
-  JSON.stringify(value, null, 2).split("\n").join(EOL + "  ".repeat(depth));
+// --------------------------------------------------------------------------
+// Source layout and string spelling
+//
+// The output copies the source file's layout: line ending (CRLF or LF),
+// indentation unit, the space after ":" and compact (one-line) files. Strings
+// keep their exact original spelling too: a string written as "\u00e9" or
+// "a\/b" in the source is written back that way, not as "é" or "a/b".
+// --------------------------------------------------------------------------
+type SourceStyle = {
+  eol: string;
+  indent: string;
+  colon: string;
+  // Decoded string -> its exact source literal (quotes included), only for
+  // strings whose source spelling differs from the standard JSON spelling.
+  rawStrings: Map<string, string>;
+};
 
-async function writeObjectFile(path: string, value: unknown): Promise<void> {
-  await writeFile(path, pretty(value, 2), "utf8");
+const DEFAULT_STYLE: SourceStyle = { eol: "\r\n", indent: "  ", colon: ": ", rawStrings: new Map() };
+
+async function readSourceStyle(path: string): Promise<SourceStyle> {
+  const rawStrings = new Map<string, string>();
+  const decoder = new StringDecoder("utf8");
+  const stringLiteral = /"(?:[^"\\\r\n]|\\.)*"/g;
+  let head = "";
+  let carry = "";
+  const scan = (part: string) => {
+    if (!part.includes("\\")) return;
+    stringLiteral.lastIndex = 0;
+    for (let match = stringLiteral.exec(part); match; match = stringLiteral.exec(part)) {
+      const literal = match[0];
+      if (!literal.includes("\\")) continue;
+      const decoded = JSON.parse(literal) as string;
+      // The first spelling found wins if the same text is spelled differently elsewhere.
+      if (JSON.stringify(decoded) !== literal && !rawStrings.has(decoded)) rawStrings.set(decoded, literal);
+    }
+  };
+  for await (const chunk of createReadStream(path)) {
+    const textChunk = carry + decoder.write(chunk as Buffer);
+    if (head.length < 65536) head += textChunk.slice(0, 65536 - head.length);
+    // A JSON string never contains a raw line break, so every complete line can
+    // be scanned on its own. One-line (compact) files are scanned up to the last
+    // complete string instead.
+    let cut = textChunk.lastIndexOf("\n") + 1;
+    if (cut === 0) {
+      stringLiteral.lastIndex = 0;
+      let end = 0;
+      for (let match = stringLiteral.exec(textChunk); match; match = stringLiteral.exec(textChunk)) end = stringLiteral.lastIndex;
+      const open = textChunk.indexOf('"', end);
+      cut = open >= 0 ? open : textChunk.length;
+    }
+    scan(textChunk.slice(0, cut));
+    carry = textChunk.slice(cut);
+  }
+  scan(carry + decoder.end());
+
+  const eol = head.includes("\r\n") ? "\r\n" : head.includes("\n") ? "\n" : "";
+  const indentMatch = head.match(/\n([ \t]+)["{\[\]}]/);
+  const colonMatch = head.match(/"\s*:( *)[^\s]/);
+  return {
+    eol,
+    indent: eol ? (indentMatch?.[1] ?? "  ") : "",
+    colon: `:${colonMatch?.[1] ?? (eol ? " " : "")}`,
+    rawStrings,
+  };
+}
+
+// Like JSON.stringify(value, null, indent), but in the source file's style:
+// RawNumber keeps its exact text, strings keep their source spelling, and
+// nested lines start at the given depth.
+function pretty(value: unknown, depth: number, style: SourceStyle = DEFAULT_STYLE): string {
+  const quote = (textValue: string) => style.rawStrings.get(textValue) ?? JSON.stringify(textValue);
+  const write = (item: unknown, level: number, inArray: boolean): string | undefined => {
+    if (item instanceof RawNumber) return item.raw;
+    if (item && typeof item === "object" && typeof (item as { toJSON?: unknown }).toJSON === "function") {
+      item = (item as { toJSON: () => unknown }).toJSON();
+    }
+    if (item === null) return "null";
+    if (typeof item === "string") return quote(item);
+    if (typeof item === "number") return Number.isFinite(item) ? String(item) : "null";
+    if (typeof item === "boolean") return item ? "true" : "false";
+    if (typeof item === "bigint") return String(item);
+    if (item === undefined || typeof item === "function" || typeof item === "symbol") return inArray ? "null" : undefined;
+    const inner = style.eol + style.indent.repeat(level + 1);
+    const close = style.eol + style.indent.repeat(level);
+    if (Array.isArray(item)) {
+      if (!item.length) return "[]";
+      return `[${inner}${item.map((entry) => write(entry, level + 1, true)).join(`,${inner}`)}${close}]`;
+    }
+    const parts: string[] = [];
+    for (const [key, entry] of Object.entries(item as RecordValue)) {
+      const written = write(entry, level + 1, false);
+      if (written !== undefined) parts.push(`${quote(key)}${style.colon}${written}`);
+    }
+    if (!parts.length) return "{}";
+    return `{${inner}${parts.join(`,${inner}`)}${close}}`;
+  };
+  return write(value, depth, true) ?? "null";
+}
+
+async function writeObjectFile(path: string, value: unknown, style: SourceStyle = DEFAULT_STYLE): Promise<void> {
+  await writeFile(path, pretty(value, 2, style), "utf8");
 }
 
 async function writeDataset(
@@ -1895,7 +1990,9 @@ async function writeDataset(
   records: OutputRecord[],
   groupFiles: Map<string, string[]>,
   separatedTests: unknown[],
+  style: SourceStyle = DEFAULT_STYLE,
 ): Promise<void> {
+  const { eol: EOL, indent } = style;
   const output = createWriteStream(outputPath, { flags: "w" });
   const write = async (value: string | Buffer) => {
     if (!output.write(value)) await once(output, "drain");
@@ -1907,13 +2004,14 @@ async function writeDataset(
 
   await write("{" + EOL);
   for (const [key, value] of Object.entries(meta)) {
-    await write(`  ${JSON.stringify(key)}: ${pretty(value, 1)},${EOL}`);
+    if (value === undefined) continue;
+    await write(`${indent}${pretty(key, 1, style)}${style.colon}${pretty(value, 1, style)},${EOL}`);
   }
-  await write(`  "Aircraft": [${EOL}`);
+  await write(`${indent}${pretty("Aircraft", 1, style)}${style.colon}[${EOL}`);
   let written = 0;
   for (const record of records) {
     if (written) await write("," + EOL);
-    await write("    ");
+    await write(indent.repeat(2));
     if ("path" in record) {
       const input = createReadStream(record.path);
       for await (const chunk of input) await write(chunk as Buffer);
@@ -1930,12 +2028,12 @@ async function writeDataset(
         const combinedTests = aircraftGroup.flatMap((item) => asItems(item.Tests).map(asRecord));
         combinedTests.sort((a, b) => testFirstDate(a) - testFirstDate(b));
         keeper.Tests = combinedTests;
-        await write(pretty(keeper, 2));
+        await write(pretty(keeper, 2, style));
       }
     }
     written += 1;
   }
-  await write(`${EOL}  ]${EOL}}`);
+  await write(`${EOL}${indent}]${EOL}}`);
   output.end();
   await once(output, "finish");
 }
@@ -1948,6 +2046,8 @@ export async function previewCleanup(
   if (!session) return null;
   const previewPath = join(session.directory, "preview.json");
   const metadata = await collectMetadata(session.rawPath);
+  // Layout and string spelling of the source file, copied into the output.
+  const style = await readSourceStyle(session.rawPath);
   const records: OutputRecord[] = [];
   const groups = new Map<string, string[]>();
   const groupOrder = new Set<string>();
@@ -1983,7 +2083,7 @@ export async function previewCleanup(
     if (groupKey) {
       const group = groups.get(groupKey) ?? [];
       const itemPath = join(session.directory, `aircraft-${serial++}.json`);
-      await writeObjectFile(itemPath, aircraft);
+      await writeObjectFile(itemPath, aircraft, style);
       group.push(itemPath);
       groups.set(groupKey, group);
       if (!groupOrder.has(groupKey)) {
@@ -1994,7 +2094,7 @@ export async function previewCleanup(
         operations.push(`Combined duplicate tail-number record(s) for ${knownPair?.[0] ?? tail}.`);
     } else {
       const itemPath = join(session.directory, `aircraft-${serial++}.json`);
-      await writeObjectFile(itemPath, aircraft);
+      await writeObjectFile(itemPath, aircraft, style);
       records.push({ path: itemPath });
     }
   }
@@ -2005,7 +2105,7 @@ export async function previewCleanup(
   if (options.removeTargetedTests)
     warnings.push("The two 84+51 test deletions are not specified by date and were left untouched.");
 
-  await writeDataset(previewPath, metadata, records, groups, separatedTests);
+  await writeDataset(previewPath, metadata, records, groups, separatedTests, style);
   const after = await scanDataset(previewPath);
   // FFT values are never edited, so the only FFT change cleanup can make is removing
   // captures together with the flights, tests, aircraft or readings they belong to.
